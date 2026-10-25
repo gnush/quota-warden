@@ -27,6 +27,5 @@ metadata:
 spec:
   namespace: quota-user-a
   expirationDate: "2026-11-08"
-  retentionDays: 7
   resources:
     cpu: "8"
