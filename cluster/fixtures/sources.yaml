@@ -1,5 +1,5 @@
 ---
-# Cluster-scoped singleton. Values mirror the SPEC worked example.
+# Cluster-scoped singleton.
 apiVersion: quota-warden.gnush.github.io/v1alpha1
 kind: QuotaBase
 metadata:
