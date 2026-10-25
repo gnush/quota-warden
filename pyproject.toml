@@ -1,0 +1,27 @@
+[project]
+name = "quota-warden"
+version = "0.1.0"
+description = "Sole writer of ResourceQuota objects in the namespaces it manages"
+requires-python = ">=3.11"
+dependencies = [
+    "kopf>=1.45,<1.46",
+    "kubernetes>=29",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["quota_warden"]
+package-dir = {quota_warden = "operator/quota_warden"}
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# e2e needs a kind cluster; `make e2e` drives it. Keeps a bare `pytest` offline.
+addopts = "--ignore=tests/e2e"
