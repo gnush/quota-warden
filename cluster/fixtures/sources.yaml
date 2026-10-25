@@ -11,9 +11,9 @@ spec:
     requests.storage: 300Gi
 ---
 apiVersion: quota-warden.gnush.github.io/v1alpha1
-kind: QuotaEntitlement
+kind: QuotaOverride
 metadata:
-  name: quota-user-a-entitlement
+  name: quota-user-a-override
 spec:
   namespace: quota-user-a
   resources:
@@ -21,7 +21,7 @@ spec:
     requests.storage: 425Ti
 ---
 apiVersion: quota-warden.gnush.github.io/v1alpha1
-kind: QuotaGrant
+kind: QuotaExtension
 metadata:
   name: quota-user-a-cpu-boost
 spec:
