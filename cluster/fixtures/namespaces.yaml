@@ -1,0 +1,22 @@
+---
+# Managed
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: quota-user-a
+  labels:
+    app.kubernetes.io/part-of: kubeflow-profile # selector label
+---
+# Not managed
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: quota-user-b
+---
+# Managed by selection but listed in protectedNamespaces
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: quota-protected
+  labels:
+    app.kubernetes.io/part-of: kubeflow-profile

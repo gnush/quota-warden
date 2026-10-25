@@ -1,0 +1,32 @@
+---
+# Cluster-scoped singleton. Values mirror the SPEC worked example.
+apiVersion: quota-warden.gnush.github.io/v1alpha1
+kind: QuotaBase
+metadata:
+  name: default
+spec:
+  resources:
+    cpu: "18"
+    memory: 130Gi
+    requests.storage: 300Gi
+---
+apiVersion: quota-warden.gnush.github.io/v1alpha1
+kind: QuotaEntitlement
+metadata:
+  name: quota-user-a-entitlement
+spec:
+  namespace: quota-user-a
+  resources:
+    cpu: "120"
+    requests.storage: 425Ti
+---
+apiVersion: quota-warden.gnush.github.io/v1alpha1
+kind: QuotaGrant
+metadata:
+  name: quota-user-a-cpu-boost
+spec:
+  namespace: quota-user-a
+  expirationDate: "2026-11-08"
+  retentionDays: 7
+  resources:
+    cpu: "8"
