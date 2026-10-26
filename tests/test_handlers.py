@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 import pytest
 from kubernetes.client.exceptions import ApiException
-from test_reconcile import FakeCore, namespace, quota
+from test_reconcile import OWNED, FakeCore, from_base, namespace, quota
 
 from quota_warden.handlers import State, Sweeper, run_once
 
@@ -379,7 +379,10 @@ def test_dry_run_event_names_orphans():
     custom = FakeCustom(config(managedNamespaces=SELECTOR, dryRun=True), base(cpu="1"))
     core = FakeCore(
         [namespace("a")],
-        {("a", "quota-warden"): quota({"cpu": "1"}), ("a", "old"): quota({"cpu": "1"})},
+        {
+            ("a", "quota-warden"): quota({"cpu": "1"}, OWNED, from_base(cpu="1")),
+            ("a", "old"): quota({"cpu": "1"}),
+        },
     )
     events = run_once(core, custom, "default")
     assert [e.message for e in events if e.body.get("kind") == "Namespace"] == [
@@ -508,3 +511,40 @@ def test_sweeper_debounce_merges_a_burst_that_arrives_after_the_first_request():
         assert runs == [0]
 
     drive(script, debounce=0.05)
+
+
+def quota_events(events):
+    return [
+        (e.body["metadata"]["namespace"], e.body["metadata"]["uid"], e.reason, e.message)
+        for e in events
+        if e.body.get("kind") == "ResourceQuota"
+    ]
+
+
+def test_writes_are_evented_on_the_quota_with_what_changed():
+    live = {("a", "quota-warden"): quota({"cpu": "1", "memory": "1Gi", "pods": "1"})}
+    core = FakeCore([namespace("a")], live)
+    custom = FakeCustom(config(managedNamespaces=SELECTOR), base(cpu="2", memory="1024Mi", gpu="1"))
+    events = run_once(core, custom, "default")
+    assert quota_events(events) == [
+        ("a", "uid-1", "Applied", "cpu 1→2, gpu 1 (new), pods 1 (removed)")
+    ]
+    assert quota_events(run_once(core, custom, "default")) == []
+
+
+def test_a_provenance_only_write_says_so():
+    core = FakeCore([namespace("a")], {("a", "quota-warden"): quota({"cpu": "1"})})
+    custom = FakeCustom(config(managedNamespaces=SELECTOR), base(cpu="1"))
+    events = run_once(core, custom, "default")
+    assert quota_events(events) == [("a", "uid-1", "Applied", "sources changed, values unchanged")]
+
+
+def test_deleting_the_quota_is_evented():
+    core = FakeCore([namespace("a")], {("a", "quota-warden"): quota({"cpu": "1"})})
+    events = run_once(core, FakeCustom(config(managedNamespaces=SELECTOR)), "default")
+    assert quota_events(events) == [("a", "uid-1", "Deleted", "no source sets any key")]
+
+
+def test_dry_run_posts_no_quota_events():
+    custom = FakeCustom(config(managedNamespaces=SELECTOR, dryRun=True), base(cpu="1"))
+    assert quota_events(run_once(FakeCore([namespace("a")]), custom, "default")) == []

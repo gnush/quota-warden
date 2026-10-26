@@ -12,10 +12,12 @@ from datetime import UTC, datetime
 import kopf
 from kubernetes import client
 from kubernetes import config as kube_config
+from kubernetes.utils.quantity import parse_quantity
 
 from .conditions import Condition, Event, update
 from .config import ConfigError, config_name, load, resync_interval
 from .merge import expires_at
+from .quantity import format_quantity
 from .reconcile import GROUP, expired, list_objects, read_object, reap, sweep
 
 logger = logging.getLogger(__name__)
@@ -85,6 +87,7 @@ def run_once(
             logger.info("%s: %s %s", r.namespace, r.action, r.hard)
         for orphan in r.orphans:
             logger.info("%s: deleted orphaned %s", r.namespace, orphan)
+    events += _write_events(results, config)
     events += _dry_run_events(results, state.dry_run, config)
     if base is not None:
         events += update(
@@ -186,6 +189,47 @@ def _source_conditions(source: dict, issues, results, dry_run: bool) -> list[Con
         if dry_run
         else Condition("Applied", "True", "Applied"),
     ]
+
+
+def _write_events(results, config) -> list[Event]:
+    """On the quota itself, so the namespace owner sees them without cluster-wide rights."""
+    events = []
+    for r in results:
+        if r.dry_run or r.action not in ("applied", "deleted"):
+            continue
+        quota = {
+            "apiVersion": "v1",
+            "kind": "ResourceQuota",
+            "metadata": {
+                "name": config.resource_quota_name,
+                "namespace": r.namespace,
+                "uid": r.uid,
+            },
+        }
+        if r.action == "deleted":
+            events.append(Event(quota, "Normal", "Deleted", "no source sets any key"))
+        else:
+            events.append(Event(quota, "Normal", "Applied", _changes(r.previous, r.hard)))
+    return events
+
+
+def _changes(previous: dict[str, str], hard: dict[str, str]) -> str:
+    def plain(value):
+        # the live side is in the API server's canonical form (1Gi), ours is plain
+        # (1073741824); one notation for both
+        return format_quantity(parse_quantity(value))
+
+    parts = []
+    for key in sorted(previous.keys() | hard.keys()):
+        old, new = previous.get(key), hard.get(key)
+        if old is None:
+            parts.append(f"{key} {plain(new)} (new)")
+        elif new is None:
+            parts.append(f"{key} {plain(old)} (removed)")
+        elif parse_quantity(old) != parse_quantity(new):
+            parts.append(f"{key} {plain(old)}→{plain(new)}")
+    # values equal, so the write was for the provenance annotation
+    return ", ".join(parts) or "sources changed, values unchanged"
 
 
 def _dry_run_events(results, reported: dict, config) -> list[Event]:

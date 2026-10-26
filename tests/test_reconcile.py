@@ -6,7 +6,7 @@ import pytest
 from kubernetes.client.exceptions import ApiException
 
 from quota_warden.config import Config
-from quota_warden.reconcile import FIELD_MANAGER, MANAGED_BY, read_object, sweep
+from quota_warden.reconcile import FIELD_MANAGER, MANAGED_BY, PROVENANCE, read_object, sweep
 
 SELECTOR = {"matchLabels": {"managed": "yes"}}
 CONFIG = Config(
@@ -61,7 +61,7 @@ class FakeCore:
             self.dry_runs.append(namespace)
             return
         self.writes.append(("apply", namespace, name))
-        self.quotas[namespace, name] = quota(hard, body["metadata"]["labels"])
+        return self._store(namespace, name, body)
 
     def replace_namespaced_resource_quota(self, name, namespace, body, **kwargs):
         dry_run = kwargs.pop("dry_run", None)
@@ -73,16 +73,28 @@ class FakeCore:
             self.dry_runs.append(namespace)
             return
         self.writes.append(("replace", namespace, name))
-        self.quotas[namespace, name] = quota(body["spec"]["hard"], body["metadata"]["labels"])
+        return self._store(namespace, name, body)
+
+    def _store(self, namespace, name, body):
+        meta = body["metadata"]
+        stored = quota(body["spec"]["hard"], meta["labels"], meta.get("annotations"))
+        self.quotas[namespace, name] = stored
+        return stored
 
     def delete_namespaced_resource_quota(self, name, namespace):
         self.writes.append(("delete", namespace, name))
         del self.quotas[namespace, name]
 
 
-def quota(hard, labels=OWNED):
-    meta = NS(labels=labels, annotations=None, resource_version="1")
+def quota(hard, labels=OWNED, annotations=None):
+    meta = NS(labels=labels, annotations=annotations, resource_version="1", uid="uid-1")
     return NS(metadata=meta, spec=NS(hard=dict(hard)))
+
+
+def from_base(**resources):
+    """The annotation a sweep writes for a quota set by the base alone."""
+    sources = {key: {"base": value} for key, value in resources.items()}
+    return {PROVENANCE: json.dumps(sources, sort_keys=True, separators=(",", ":"))}
 
 
 def override(name, target, **resources):
@@ -118,7 +130,8 @@ def test_unmanaged_and_terminating_namespaces_are_skipped():
 
 
 def test_equal_value_in_another_unit_does_not_write():
-    core = FakeCore([namespace("a")], {("a", "quota-warden"): quota({"memory": "1Gi"})})
+    live = {("a", "quota-warden"): quota({"memory": "1Gi"}, OWNED, from_base(memory="1024Mi"))}
+    core = FakeCore([namespace("a")], live)
     results, _ = run(core, base(memory="1024Mi"))
     assert results["a"].action == "unchanged"
     assert core.writes == []
@@ -244,8 +257,8 @@ def test_dry_run_does_not_delete():
 
 
 def test_dry_run_unchanged_is_not_flagged():
-    core = FakeCore([namespace("a")], {("a", "quota-warden"): quota({"cpu": "1"})})
-    results, _ = sweep(core, base(cpu="1"), [], [], DRY, NOW)
+    live = {("a", "quota-warden"): quota({"cpu": "1"}, OWNED, from_base(cpu="1"))}
+    results, _ = sweep(FakeCore([namespace("a")], live), base(cpu="1"), [], [], DRY, NOW)
     assert (results[0].action, results[0].dry_run) == ("unchanged", False)
 
 
@@ -271,7 +284,10 @@ def test_orphans_in_unmanaged_namespaces_are_left():
 def test_dry_run_reports_orphans_without_deleting():
     core = FakeCore(
         [namespace("a")],
-        {("a", "quota-warden"): quota({"cpu": "1"}), ("a", "old-name"): quota({"cpu": "1"})},
+        {
+            ("a", "quota-warden"): quota({"cpu": "1"}, OWNED, from_base(cpu="1")),
+            ("a", "old-name"): quota({"cpu": "1"}),
+        },
     )
     results, _ = sweep(core, base(cpu="1"), [], [], DRY, NOW)
     assert (results[0].action, results[0].orphans, results[0].dry_run) == (
@@ -422,3 +438,25 @@ def test_rejection_is_blamed_on_the_replace_layer_and_the_extension():
         [extension("e", "a", bad="1"), extension("other", "a", cpu="1")],
     )
     assert results["a"].blame == ("default", "e")
+
+
+def test_provenance_is_written_with_the_quota():
+    core = FakeCore([namespace("a")])
+    run(core, base(cpu="1"), [override("a", "a", cpu="2")], [extension("e", "a", cpu="1")])
+    annotation = core.quotas["a", "quota-warden"].metadata.annotations[PROVENANCE]
+    assert json.loads(annotation) == {"cpu": {"override": "2", "extensions": {"e": "1"}}}
+
+
+def test_a_provenance_change_alone_writes():
+    core = FakeCore([namespace("a")])
+    run(core, base(cpu="1"), [], [extension("e-old", "a", cpu="1")])
+    results, _ = run(core, base(cpu="1"), [], [extension("e-new", "a", cpu="1")])
+    assert results["a"].action == "applied"
+    annotation = core.quotas["a", "quota-warden"].metadata.annotations[PROVENANCE]
+    assert "e-new" in annotation and "e-old" not in annotation
+
+
+def test_a_write_records_the_previous_values_and_the_uid():
+    live = {("a", "quota-warden"): quota({"cpu": "1", "pods": "1"})}
+    results, _ = run(FakeCore([namespace("a")], live), base(cpu="2"))
+    assert (results["a"].previous, results["a"].uid) == ({"cpu": "1", "pods": "1"}, "uid-1")

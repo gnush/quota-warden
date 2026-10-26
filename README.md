@@ -41,6 +41,10 @@ A source aimed at an unmanaged, protected or missing namespace is inert
 Expired `QuotaExtension`s are deleted by the operator, whatever namespace they
 target; under `dryRun` they are only reported.
 
+The quota's `quota-warden.gnush.github.io/provenance` annotation maps each key to
+the sources that set it. Every write and delete is an Event on the quota
+(`kubectl describe resourcequota quota-warden -n <ns>`) naming the keys that changed.
+
 ## Tests
 
 Requirements:

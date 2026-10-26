@@ -11,7 +11,7 @@ from kubernetes.client.exceptions import ApiException
 from kubernetes.utils.quantity import parse_quantity
 
 from .config import Config
-from .merge import Issue, expires_at, is_active, merge
+from .merge import Issue, expires_at, is_active, merge, provenance
 from .quantity import format_quantity
 from .targeting import is_managed, is_protected
 
@@ -21,6 +21,7 @@ FIELD_MANAGER = "quota-warden"
 # Deletion is limited to quotas carrying this label, so an unrelated quota that
 # happens to share resourceQuotaName is never removed.
 MANAGED_BY = ("app.kubernetes.io/managed-by", "quota-warden")
+PROVENANCE = f"{GROUP}/provenance"
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,10 @@ class Result:
     blame: tuple[str, ...] = ()
     # why a namespace was skipped: Unmanaged, Protected or Terminating
     reason: str = ""
+    # spec.hard of the owned quota before an applied or deleted write
+    previous: dict[str, str] = field(default_factory=dict)
+    # of the quota written or deleted; Events need it to show in kubectl describe
+    uid: str = ""
 
 
 def read_object(custom, plural: str, name: str) -> dict | None:
@@ -76,7 +81,10 @@ def sweep(
         ns_extensions = by_extensions.get(namespace.metadata.name, [])
         merged, found = merge(base or {}, ns_override, ns_extensions)
         hard = {key: format_quantity(value) for key, value in merged.items()}
-        result = reconcile_namespace(core, namespace, config, hard)
+        sources = provenance(base or {}, ns_override, ns_extensions)
+        # fixed serialisation: an unchanged sweep must compare equal and write nothing
+        annotation = json.dumps(sources, sort_keys=True, separators=(",", ":"))
+        result = reconcile_namespace(core, namespace, config, hard, annotation)
         if result.action == "rejected":
             blame = _blame(result.error, base, ns_override, ns_extensions)
             result = replace(result, blame=blame)
@@ -147,7 +155,9 @@ def _blame(
     return tuple(dict.fromkeys(blamed))
 
 
-def reconcile_namespace(core, namespace, config: Config, hard: dict[str, str]) -> Result:
+def reconcile_namespace(
+    core, namespace, config: Config, hard: dict[str, str], annotation: str = "{}"
+) -> Result:
     name = namespace.metadata.name
     # a terminating namespace refuses writes; its quota goes with it
     if (namespace.status and namespace.status.phase) == "Terminating":
@@ -166,14 +176,17 @@ def reconcile_namespace(core, namespace, config: Config, hard: dict[str, str]) -
     if not config.dry_run:
         for orphan in orphans:
             _delete(core, name, orphan)
-    result = _reconcile_owned(core, name, existing, config, hard)
+    result = _reconcile_owned(core, name, existing, config, hard, annotation)
     if not orphans:
         return result
     return replace(result, orphans=orphans, dry_run=result.dry_run or config.dry_run)
 
 
-def _reconcile_owned(core, name: str, existing, config: Config, hard: dict[str, str]) -> Result:
+def _reconcile_owned(
+    core, name: str, existing, config: Config, hard: dict[str, str], annotation: str
+) -> Result:
     owned = existing is not None and _owned(existing)
+    live = (existing.spec.hard or {}) if owned else {}
 
     if not hard:
         if not owned:
@@ -181,18 +194,20 @@ def _reconcile_owned(core, name: str, existing, config: Config, hard: dict[str, 
         if config.dry_run:
             return Result(name, "deleted", dry_run=True)
         _delete(core, name, config.resource_quota_name)
-        return Result(name, "deleted")
+        return Result(name, "deleted", previous=live, uid=existing.metadata.uid)
 
-    live = (existing.spec.hard or {}) if owned else {}
-    if owned and _same(live, hard):
+    live_annotation = (existing.metadata.annotations or {}).get(PROVENANCE) if owned else None
+    if owned and _same(live, hard) and live_annotation == annotation:
         return Result(name, "unchanged", hard)
 
     try:
         # apply cannot remove a key another field manager owns, e.g. one added by kubectl edit
         if live.keys() - hard.keys():
-            _replace(core, name, existing, hard, config.dry_run)
+            written = _replace(core, name, existing, hard, annotation, config.dry_run)
         else:
-            _apply(core, name, config.resource_quota_name, hard, config.dry_run)
+            written = _apply(
+                core, name, config.resource_quota_name, hard, annotation, config.dry_run
+            )
     except ApiException as exc:
         if exc.status == 422:
             return Result(name, "rejected", hard, _message(exc), dry_run=config.dry_run)
@@ -200,7 +215,9 @@ def _reconcile_owned(core, name: str, existing, config: Config, hard: dict[str, 
         if exc.status == 409:
             return Result(name, "unchanged", hard)
         raise
-    return Result(name, "applied", hard, dry_run=config.dry_run)
+    if config.dry_run:
+        return Result(name, "applied", hard, dry_run=True)
+    return Result(name, "applied", hard, previous=live, uid=written.metadata.uid)
 
 
 def _delete(core, namespace: str, name: str) -> None:
@@ -223,17 +240,22 @@ def _same(live: dict[str, str], hard: dict[str, str]) -> bool:
     )
 
 
-def _apply(core, namespace: str, name: str, hard: dict[str, str], dry_run: bool) -> None:
+def _apply(core, namespace: str, name: str, hard: dict[str, str], annotation: str, dry_run: bool):
     key, value = MANAGED_BY
     body = {
         "apiVersion": "v1",
         "kind": "ResourceQuota",
-        "metadata": {"name": name, "namespace": namespace, "labels": {key: value}},
+        "metadata": {
+            "name": name,
+            "namespace": namespace,
+            "labels": {key: value},
+            "annotations": {PROVENANCE: annotation},
+        },
         "spec": {"hard": hard},
     }
     # server-side dry run: validated and admitted in full, so rejections still show
     options = {"dry_run": "All"} if dry_run else {}
-    core.patch_namespaced_resource_quota(
+    return core.patch_namespaced_resource_quota(
         name,
         namespace,
         body,
@@ -244,7 +266,7 @@ def _apply(core, namespace: str, name: str, hard: dict[str, str], dry_run: bool)
     )
 
 
-def _replace(core, namespace: str, existing, hard: dict[str, str], dry_run: bool) -> None:
+def _replace(core, namespace: str, existing, hard: dict[str, str], annotation: str, dry_run: bool):
     """PUT `hard` over the listed object; its resourceVersion makes a concurrent edit a 409."""
     meta = existing.metadata
     body = {
@@ -254,13 +276,13 @@ def _replace(core, namespace: str, existing, hard: dict[str, str], dry_run: bool
             "name": meta.name,
             "namespace": namespace,
             "labels": meta.labels,
-            "annotations": meta.annotations,
+            "annotations": {**(meta.annotations or {}), PROVENANCE: annotation},
             "resourceVersion": meta.resource_version,
         },
         "spec": {"hard": hard},
     }
     options = {"dry_run": "All"} if dry_run else {}
-    core.replace_namespaced_resource_quota(
+    return core.replace_namespaced_resource_quota(
         meta.name,
         namespace,
         body,

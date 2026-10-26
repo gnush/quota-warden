@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from quota_warden.merge import Issue, merge
+from quota_warden.merge import Issue, merge, provenance
 from quota_warden.quantity import parse
 
 
@@ -84,3 +84,21 @@ def test_invalid_value_dropped_for_that_key_only():
 
 def test_source_without_resources():
     assert merge({"metadata": {"name": "default"}, "spec": {}}, None, []) == ({}, [])
+
+
+def test_provenance_names_each_source_and_drops_the_shadowed_base():
+    base = source("default", gpu="1", storage="300Gi", cpu="18")
+    override = source("a", gpu="3", storage="425Ti")
+    assert provenance(base, override, [source("a-boost", gpu="8")]) == {
+        "cpu": {"base": "18"},
+        "gpu": {"override": "3", "extensions": {"a-boost": "8"}},
+        "storage": {"override": "425Ti"},
+    }
+
+
+def test_provenance_keeps_values_as_written_and_skips_invalid_ones():
+    extensions = [source("a-boost", pods=2, cpu="lots")]
+    assert provenance(source("default", memory="1024Mi"), None, extensions) == {
+        "memory": {"base": "1024Mi"},
+        "pods": {"extensions": {"a-boost": "2"}},
+    }

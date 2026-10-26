@@ -4,6 +4,7 @@ The operator runs as `kopf run` in a subprocess with a kubeconfig holding only
 E2E_CONTEXT, so it cannot reach whatever cluster the ambient context points at.
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -463,6 +464,38 @@ def test_expiry_while_the_operator_is_stopped(api, custom, operator, base, exten
         operator.start()
     assert wait_for(lambda: hard(api) == q(cpu="2")), hard(api)
     assert wait_for(lambda: not extension_exists(custom, "e2e-ext-stopped"))
+
+
+def provenance(api):
+    annotations = api.read_namespaced_resource_quota(QUOTA, NAMESPACE).metadata.annotations
+    return json.loads((annotations or {}).get(f"{GROUP}/provenance", "null"))
+
+
+def test_provenance_names_the_source_of_each_key(api, base, override, extension):
+    label(api, MANAGED_LABEL[LABEL])
+    base(cpu="2", memory="1Gi")
+    override(NAMESPACE, cpu="4")
+    extension("e2e-prov", NAMESPACE, FUTURE, cpu="1")
+    expected = {
+        "cpu": {"override": "4", "extensions": {"e2e-prov": "1"}},
+        "memory": {"base": "1Gi"},
+    }
+    assert wait_for(lambda: provenance(api) == expected), provenance(api)
+
+
+def test_a_write_is_evented_on_the_quota(api, base):
+    label(api, MANAGED_LABEL[LABEL])
+    base(cpu="2")
+    wait_for(lambda: hard(api) == q(cpu="2"))
+    base(cpu="3")
+    uid = api.read_namespaced_resource_quota(QUOTA, NAMESPACE).metadata.uid
+
+    def applied():
+        selector = f"involvedObject.kind=ResourceQuota,involvedObject.uid={uid},reason=Applied"
+        events = api.list_namespaced_event(NAMESPACE, field_selector=selector).items
+        return [e.message for e in events]
+
+    assert wait_for(lambda: "cpu 2→3" in applied()), applied()
 
 
 def test_operator_is_still_running(operator):

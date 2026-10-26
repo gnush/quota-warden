@@ -61,3 +61,21 @@ def merge(
             merged[key] = add(merged.get(key, Decimal(0)), value)
 
     return merged, issues
+
+
+def _written(source: dict) -> dict[str, str]:
+    """Valid keys as written in the source, for a reader to find them there."""
+    resources = source.get("spec", {}).get("resources") or {}
+    return {key: str(resources[key]) for key in _resources(source, [])}
+
+
+def provenance(base: dict, override: dict | None, extensions: list[dict]) -> dict[str, dict]:
+    """Per merged key, the sources that set it; a base value the override replaced is left out."""
+    result: dict[str, dict] = {key: {"base": value} for key, value in _written(base).items()}
+    for key, value in _written(override or {}).items():
+        result[key] = {"override": value}
+    for extension in extensions:
+        name = extension.get("metadata", {}).get("name", "")
+        for key, value in _written(extension).items():
+            result.setdefault(key, {}).setdefault("extensions", {})[name] = value
+    return result
