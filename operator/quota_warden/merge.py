@@ -1,6 +1,8 @@
 """The merge of base, overrides and extensions. See SPEC.md, Merge algorithm."""
 
+import re
 from dataclasses import dataclass
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Literal
 
@@ -24,6 +26,28 @@ def _resources(source: dict, issues: list[Issue]) -> dict[str, Decimal]:
         except QuantityError as exc:
             issues.append(Issue("invalid", name, key, str(exc)))
     return parsed
+
+
+# fromisoformat alone also takes 20261108 and 2026-W45-7
+_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _expires_at(extension: dict) -> datetime | None:
+    value = extension.get("spec", {}).get("expirationDate")
+    if not isinstance(value, str) or not _DATE.fullmatch(value):
+        return None
+    try:
+        day = date.fromisoformat(value)
+    except ValueError:
+        return None
+    # expirationDate is the last active day
+    return datetime.combine(day + timedelta(days=1), time(), timezone.utc)
+
+
+def is_active(extension: dict, now: datetime) -> bool:
+    """Whether the extension contributes to the merge; not whether it may be deleted."""
+    expires_at = _expires_at(extension)
+    return expires_at is not None and now < expires_at
 
 
 def merge(
