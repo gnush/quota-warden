@@ -11,6 +11,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8",
+    "ruff>=0.6",
 ]
 
 [build-system]
@@ -25,3 +26,15 @@ package-dir = {quota_warden = "operator/quota_warden"}
 testpaths = ["tests"]
 # e2e needs a kind cluster; `make e2e` drives it. Keeps a bare `pytest` offline.
 addopts = "--ignore=tests/e2e"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.ruff.lint.isort]
+# e2e imports conftest as a top-level module
+known-local-folder = ["conftest"]
+known-first-party = ["quota_warden"]

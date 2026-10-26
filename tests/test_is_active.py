@@ -1,10 +1,9 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
 from quota_warden.merge import is_active
 
-UTC = timezone.utc
 MIDNIGHT_AFTER = datetime(2026, 11, 9, tzinfo=UTC)
 
 

@@ -30,4 +30,5 @@ make -f cluster/Makefile clean     # delete both
 in `cluster/Makefile`; `cluster/fixtures/namespaces.yaml` comments say what each
 namespace is for.
 
-Unit suites need no cluster: `.venv/bin/pytest`.
+Unit suites need no cluster: `.venv/bin/pytest`. Lint and format:
+`.venv/bin/ruff check . && .venv/bin/ruff format --check .`

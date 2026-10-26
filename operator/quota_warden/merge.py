@@ -2,7 +2,7 @@
 
 import re
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Literal
 
@@ -41,7 +41,7 @@ def _expires_at(extension: dict) -> datetime | None:
     except ValueError:
         return None
     # expirationDate is the last active day
-    return datetime.combine(day + timedelta(days=1), time(), timezone.utc)
+    return datetime.combine(day + timedelta(days=1), time(), UTC)
 
 
 def is_active(extension: dict, now: datetime) -> bool:

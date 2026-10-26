@@ -8,9 +8,10 @@ record observed API-server behaviour that later stages depend on.
 from decimal import Decimal
 
 import pytest
-from conftest import LABEL, MANAGED_LABEL
 from kubernetes.client.exceptions import ApiException
 from kubernetes.utils.quantity import parse_quantity
+
+from conftest import LABEL, MANAGED_LABEL
 
 
 def _labels(api, name):
@@ -44,9 +45,7 @@ def _roundtrip(api, name, key, value):
     except ApiException as exc:
         return None, exc.status
     try:
-        stored = api.read_namespaced_resource_quota(
-            name, "quota-user-a"
-        ).spec.hard[key]
+        stored = api.read_namespaced_resource_quota(name, "quota-user-a").spec.hard[key]
         return stored, 200
     finally:
         api.delete_namespaced_resource_quota(name, "quota-user-a")
