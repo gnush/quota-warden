@@ -94,15 +94,6 @@ def run_once(
     listed = {r.namespace for r in results}
     for override in overrides:
         wanted = _source_conditions(override, issues, results, config.dry_run)
-        name = override["metadata"]["name"]
-        duplicate = "; ".join(
-            i.message for i in issues if i.kind == "duplicate" and i.source == name
-        )
-        wanted.append(
-            Condition("Duplicate", "True", "DuplicateKeys", duplicate)
-            if duplicate
-            else Condition("Duplicate", "False", "Unique")
-        )
         wanted = _targeted(override, wanted, skipped, listed, "override")
         events += update(custom, "quotaoverrides", override, wanted)
     reaped, reap_events = _reap(custom, expired(extensions, now), state, config.dry_run)

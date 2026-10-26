@@ -313,15 +313,15 @@ def override(custom, operator):
     """Create an override; all are deleted on teardown."""
     created = []
 
-    def _create(name, target, **resources):
+    def _create(target, **resources):
         body = {
             "apiVersion": f"{GROUP}/{VERSION}",
             "kind": "QuotaOverride",
-            "metadata": {"name": name},
+            "metadata": {"name": target},
             "spec": {"namespace": target, "resources": resources},
         }
         custom.create_cluster_custom_object(GROUP, VERSION, "quotaoverrides", body)
-        created.append(name)
+        created.append(target)
 
     yield _create
     for name in created:
@@ -338,7 +338,7 @@ def conditions(custom, name):
 def test_override_raises_a_key_and_omitted_keys_keep_the_base(api, base, override):
     label(api, MANAGED_LABEL[LABEL])
     base(cpu="2", memory="1Gi")
-    override("e2e-raise", NAMESPACE, cpu="8")
+    override(NAMESPACE, cpu="8")
     assert wait_for(lambda: hard(api) == q(cpu="8", memory="1Gi")), hard(api)
     # a sweep writes namespaces in order; quota-user-a can still hold the last test's base
     assert wait_for(lambda: hard(api, "quota-user-a") == q(cpu="2", memory="1Gi")), hard(
@@ -349,40 +349,23 @@ def test_override_raises_a_key_and_omitted_keys_keep_the_base(api, base, overrid
 def test_override_lowers_below_the_base(api, base, override):
     label(api, MANAGED_LABEL[LABEL])
     base(cpu="2", memory="1Gi")
-    override("e2e-lower", NAMESPACE, cpu="1")
+    override(NAMESPACE, cpu="1")
     assert wait_for(lambda: hard(api) == q(cpu="1", memory="1Gi")), hard(api)
 
 
-def test_duplicate_overrides_take_the_max_and_name_each_other(api, custom, base, override):
+def test_deleting_the_override_returns_the_namespace_to_the_base(api, custom, base, override):
     label(api, MANAGED_LABEL[LABEL])
     base(cpu="2")
-    override("e2e-dup-one", NAMESPACE, cpu="6")
-    override("e2e-dup-two", NAMESPACE, cpu="8")
-    assert wait_for(lambda: hard(api) == q(cpu="8")), hard(api)
-
-    def duplicate(name):
-        return conditions(custom, name).get("Duplicate", {})
-
-    assert wait_for(lambda: duplicate("e2e-dup-one").get("status") == "True")
-    assert "e2e-dup-two" in duplicate("e2e-dup-one")["message"]
-    assert "e2e-dup-one" in wait_for(lambda: duplicate("e2e-dup-two").get("message"))
-
-
-def test_retargeting_an_override_returns_the_old_namespace_to_the_base(api, custom, base, override):
-    label(api, MANAGED_LABEL[LABEL])
-    base(cpu="2")
-    override("e2e-move", NAMESPACE, cpu="8")
+    override(NAMESPACE, cpu="8")
     wait_for(lambda: hard(api) == q(cpu="8"))
-    patch = {"spec": {"namespace": "quota-user-a"}}
-    custom.patch_cluster_custom_object(GROUP, VERSION, "quotaoverrides", "e2e-move", patch)
+    custom.delete_cluster_custom_object(GROUP, VERSION, "quotaoverrides", NAMESPACE)
     assert wait_for(lambda: hard(api) == q(cpu="2")), hard(api)
-    assert wait_for(lambda: hard(api, "quota-user-a") == q(cpu="8"))
 
 
 def test_override_on_an_unmanaged_namespace_is_inert(api, custom, base, override):
     base(cpu="2")
-    override("e2e-inert", "quota-user-b", cpu="8")
-    targeted = wait_for(lambda: conditions(custom, "e2e-inert").get("Targeted"))
+    override("quota-user-b", cpu="8")
+    targeted = wait_for(lambda: conditions(custom, "quota-user-b").get("Targeted"))
     assert (targeted["status"], targeted["reason"]) == ("False", "Unmanaged")
     assert hard(api, "quota-user-b") is None
 
@@ -427,7 +410,7 @@ def extension_exists(custom, name):
 def test_extension_adds_on_top_of_the_override(api, base, override, extension):
     label(api, MANAGED_LABEL[LABEL])
     base(cpu="2", memory="1Gi")
-    override("e2e-ext-base", NAMESPACE, cpu="4")
+    override(NAMESPACE, cpu="4")
     extension("e2e-ext-raise", NAMESPACE, FUTURE, cpu="8")
     assert wait_for(lambda: hard(api) == q(cpu="12", memory="1Gi")), hard(api)
 

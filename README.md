@@ -30,7 +30,7 @@ Examples: `cluster/fixtures/quota-{base,override,extension}.yaml`.
 | Kind | Applies to | Per key |
 |---|---|---|
 | `QuotaBase` | every managed namespace; the one named by `baseName` | the default |
-| `QuotaOverride` | `spec.namespace` | replaces the base; several on one key: the max, with a `Duplicate` condition |
+| `QuotaOverride` | `spec.namespace`, which must equal its name: one per namespace | replaces the base |
 | `QuotaExtension` | `spec.namespace`, through `expirationDate` (UTC) | added on top of base or override |
 
 A key no source sets is absent from the quota; an empty merge removes the quota.

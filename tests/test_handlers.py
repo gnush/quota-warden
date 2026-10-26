@@ -159,7 +159,6 @@ def test_extension_gets_conditions_like_an_override():
     assert conditions["Valid"][0] == "False" and "memory" in conditions["Valid"][1]
     assert conditions["Applied"] == ("True", "")
     assert conditions["Targeted"] == ("True", "")
-    assert "Duplicate" not in conditions
 
 
 def test_extension_rejection_is_marked_on_the_extension():
@@ -291,17 +290,12 @@ def test_override_gets_its_own_conditions():
     custom = FakeCustom(
         config(managedNamespaces=SELECTOR),
         base(cpu="1"),
-        override("o1", "a", cpu="2", memory="x"),
-        override("o2", "a", cpu="3"),
+        override("o", "a", cpu="2", memory="x"),
     )
     run_once(FakeCore([namespace("a")]), custom, "default")
-    o1 = custom.conditions("quotaoverrides", "o1")
-    assert o1["Valid"][0] == "False" and "memory" in o1["Valid"][1]
-    assert o1["Applied"] == ("True", "")
-    assert o1["Duplicate"] == ("True", "cpu also set by o2; using the maximum")
-    assert custom.conditions("quotaoverrides", "o2")["Duplicate"][1].startswith(
-        "cpu also set by o1;"
-    )
+    o = custom.conditions("quotaoverrides", "o")
+    assert o["Valid"][0] == "False" and "memory" in o["Valid"][1]
+    assert o["Applied"] == ("True", "")
 
 
 def test_rejection_marks_only_the_source_of_the_key():

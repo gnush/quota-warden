@@ -58,13 +58,28 @@ def test_base_takes_any_key_as_int_or_string(create):
 
 def test_override_takes_any_key_as_int_or_string(create):
     spec = {"namespace": "quota-user-a", "resources": {"cpu": "120", "pods": 30}}
-    assert create("quotaoverrides", "e2e-override", spec)["spec"] == spec
+    assert create("quotaoverrides", "quota-user-a", spec)["spec"] == spec
 
 
 @pytest.mark.parametrize("spec", [{"resources": {"cpu": "1"}}, {"namespace": ""}])
 def test_override_requires_a_namespace(create, spec):
     with pytest.raises(ApiException) as exc:
         create("quotaoverrides", "e2e-override-no-ns", spec)
+    assert exc.value.status == 422
+
+
+def test_override_name_must_be_its_namespace(create):
+    with pytest.raises(ApiException) as exc:
+        create("quotaoverrides", "quota-user-a-override", {"namespace": "quota-user-a"})
+    assert exc.value.status == 422
+    assert "metadata.name must equal spec.namespace" in exc.value.body
+
+
+def test_override_cannot_be_retargeted(create, custom):
+    create("quotaoverrides", "quota-user-a", {"namespace": "quota-user-a"})
+    patch = {"spec": {"namespace": "quota-user-b"}}
+    with pytest.raises(ApiException) as exc:
+        custom.patch_cluster_custom_object(GROUP, VERSION, "quotaoverrides", "quota-user-a", patch)
     assert exc.value.status == 422
 
 
