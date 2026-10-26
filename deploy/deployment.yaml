@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: quota-warden
+  namespace: quota-warden
+spec:
+  # --standalone: kopf does no peering, so a second replica would sweep
+  # concurrently and the two would fight over the same quotas
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: quota-warden
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: quota-warden
+    spec:
+      serviceAccountName: quota-warden
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: operator
+          # digest pin when deploying for real: the tag is rebuilt on every push
+          image: ghcr.io/gnush/quota-warden:1.0.0
+          args:
+            - --liveness=http://0.0.0.0:8080/healthz
+          env:
+            - name: QUOTA_WARDEN_CONFIG
+              value: default
+            - name: QUOTA_WARDEN_RESYNC_INTERVAL
+              value: 1h
+          ports:
+            - name: health
+              containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]

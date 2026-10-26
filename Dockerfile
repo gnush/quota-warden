@@ -12,7 +12,8 @@ RUN pip install --no-cache-dir .
 ENV PYTHONUNBUFFERED=1
 
 RUN useradd --create-home --uid 10001 warden
-USER warden
+# numeric: kubelet cannot verify a named user is non-root against runAsNonRoot
+USER 10001
 
 # Standalone: no peering CRDs, so never more than one replica (see README).
 # Extra kopf flags append to these, e.g. `docker run <image> --verbose`.

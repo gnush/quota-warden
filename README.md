@@ -22,6 +22,29 @@ while that config is missing or invalid.
 | `QUOTA_WARDEN_CONFIG` | `default` | name of the `QuotaWardenConfig` to read |
 | `QUOTA_WARDEN_RESYNC_INTERVAL` | `1h` | full sweep without a triggering event; `<n>s`, `<n>m` or `<n>h`; read at startup. An expiry takes effect at most this late. |
 
+## Deploying
+
+```sh
+kubectl apply -k .
+```
+
+From a checkout; kustomize fetches nothing extra. From a release tag:
+
+```sh
+kubectl apply -k 'github.com/gnush/quota-warden?ref=1.0.0'
+```
+
+Installs the CRDs plus `deploy/`: namespace `quota-warden`, ServiceAccount, a
+cluster-wide ClusterRole, and the Deployment. One replica, `Recreate`, because
+`--standalone` has no peering. Liveness and readiness are kopf's
+`/healthz` on 8080.
+
+Nothing is managed until a `QuotaWardenConfig` exists, which is left to the
+deployment: `deploy/config.yaml` is an example with `dryRun: true`, not part of
+the kustomization. Apply it once the selector matches what you intend.
+
+Overlays are for what differs per cluster; the image is `kustomize edit set image`.
+
 ## Sources
 
 One ResourceQuota per managed namespace, merged from three cluster-scoped kinds.

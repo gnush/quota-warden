@@ -1,0 +1,56 @@
+# Verbs come from the API calls in reconcile.py and handlers.py, plus kopf's own
+# discovery (it lists and watches CRDs to notice a resource appearing later).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: quota-warden
+rules:
+  # listing every namespace and watching them for label changes
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [list, watch]
+  # the owned quota: apply (create+patch) creates it, replace (update) drops a key
+  # another field manager owns, delete covers the empty merge and onUnmanage
+  - apiGroups: [""]
+    resources: [resourcequotas]
+    verbs: [list, watch, create, patch, update, delete]
+  # kopf discovers resources through the CRDs
+  - apiGroups: [apiextensions.k8s.io]
+    resources: [customresourcedefinitions]
+    verbs: [list, watch]
+  - apiGroups: [quota-warden.gnush.github.io]
+    resources:
+      - quotawardenconfigs
+      - quotabases
+      - quotaoverrides
+      - quotaextensions
+    verbs: [get, list, watch]
+  # conditions; delete is the extension reaper
+  - apiGroups: [quota-warden.gnush.github.io]
+    resources:
+      - quotawardenconfigs/status
+      - quotabases/status
+      - quotaoverrides/status
+      - quotaextensions/status
+    verbs: [patch]
+  - apiGroups: [quota-warden.gnush.github.io]
+    resources: [quotaextensions]
+    verbs: [delete]
+  # on the quota in each managed namespace, and in `default` for cluster-scoped
+  # objects: the client library reports no current namespace, so kopf falls back
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: quota-warden
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: quota-warden
+subjects:
+  - kind: ServiceAccount
+    name: quota-warden
+    namespace: quota-warden

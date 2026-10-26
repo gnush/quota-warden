@@ -1,0 +1,13 @@
+apiVersion: quota-warden.gnush.github.io/v1alpha1
+kind: QuotaWardenConfig
+metadata:
+  name: default
+spec:
+  # {} manages every namespace; narrow it before applying, or start with dryRun
+  managedNamespaces:
+    matchLabels:
+      app.kubernetes.io/part-of: kubeflow-profile
+  protectedNamespaces:
+    - kube-system
+    - quota-warden
+  dryRun: true
