@@ -5,7 +5,7 @@ import pytest
 from kubernetes.client.exceptions import ApiException
 
 from quota_warden.config import Config
-from quota_warden.reconcile import FIELD_MANAGER, MANAGED_BY, read_base, sweep
+from quota_warden.reconcile import FIELD_MANAGER, MANAGED_BY, read_object, sweep
 
 SELECTOR = {"matchLabels": {"managed": "yes"}}
 CONFIG = Config({"managedNamespaces": SELECTOR}, "quota-warden", "default", False)
@@ -60,19 +60,8 @@ def quota(hard, labels=OWNED):
     return NS(metadata=NS(labels=labels), spec=NS(hard=dict(hard)))
 
 
-class FakeCustom:
-    def __init__(self, base=None):
-        self.base = base
-
-    def get_cluster_custom_object(self, group, version, plural, name):
-        assert (group, plural) == ("quota-warden.gnush.github.io", "quotabases")
-        if self.base is None or self.base["metadata"]["name"] != name:
-            raise ApiException(status=404)
-        return self.base
-
-
 def run(core, base_object):
-    results, issues = sweep(core, FakeCustom(base_object), CONFIG)
+    results, issues = sweep(core, base_object, CONFIG)
     return {r.namespace: r for r in results}, issues
 
 
@@ -127,15 +116,6 @@ def test_empty_merge_leaves_an_unlabeled_quota_alone():
     assert core.writes == []
 
 
-def test_base_with_another_name_counts_as_missing():
-    core = FakeCore([namespace("a")])
-    other = base(cpu="1")
-    other["metadata"]["name"] = "other"
-    results, _ = run(core, other)
-    assert results["a"].action == "unchanged"
-    assert core.writes == []
-
-
 def test_invalid_value_is_dropped_and_reported():
     core = FakeCore([namespace("a")])
     results, issues = run(core, base(cpu="1", memory="-1"))
@@ -160,10 +140,18 @@ def test_other_api_errors_propagate():
         run(core, base(cpu="1"))
 
 
-def test_read_base_propagates_non_404():
+def test_read_object_propagates_non_404():
     class Broken:
         def get_cluster_custom_object(self, *_):
             raise ApiException(status=403)
 
     with pytest.raises(ApiException):
-        read_base(Broken(), "default")
+        read_object(Broken(), "quotabases", "default")
+
+
+def test_read_object_absent_is_none():
+    class Absent:
+        def get_cluster_custom_object(self, *_):
+            raise ApiException(status=404)
+
+    assert read_object(Absent(), "quotabases", "default") is None

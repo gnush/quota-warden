@@ -28,18 +28,18 @@ class Result:
     error: str = ""
 
 
-def read_base(custom, name: str) -> dict | None:
+def read_object(custom, plural: str, name: str) -> dict | None:
     try:
-        return custom.get_cluster_custom_object(GROUP, VERSION, "quotabases", name)
+        return custom.get_cluster_custom_object(GROUP, VERSION, plural, name)
     except ApiException as exc:
         if exc.status == 404:
             return None
         raise
 
 
-def sweep(core, custom, config: Config) -> tuple[list[Result], list[Issue]]:
+def sweep(core, base: dict | None, config: Config) -> tuple[list[Result], list[Issue]]:
     # the base is the only source and it is cluster-wide, so one merge serves every namespace
-    merged, issues = merge(read_base(custom, config.base_name) or {}, [], [])
+    merged, issues = merge(base or {}, [], [])
     hard = {key: format_quantity(value) for key, value in merged.items()}
     results = [
         reconcile_namespace(core, namespace, config, hard)
