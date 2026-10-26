@@ -1,0 +1,38 @@
+name: image
+
+on:
+  push:
+    branches:
+      - master
+    tags:
+      # x.y.z, vx.y.z, ...
+      - "*.*.*"
+  pull_request:
+
+jobs:
+  image:
+    # native arm64 runners, so no QEMU; it assembles the manifest itself
+    uses: docker/github-builder/.github/workflows/build.yml@v1
+    permissions:
+      contents: read
+      id-token: write # signs attestations and cache entries via GitHub OIDC
+      packages: write
+    with:
+      output: image
+      push: ${{ github.event_name != 'pull_request' }} # only build on pull requests
+      platforms: linux/amd64,linux/arm64
+      meta-images: ghcr.io/${{ github.repository }}
+      meta-tags: |
+        type=semver,pattern={{version}}
+        type=semver,pattern={{major}}.{{minor}}
+        type=semver,pattern={{major}}
+        type=sha
+      cache: true
+      cache-mode: max
+      labels: |
+        org.opencontainers.image.source=https://github.com/${{ github.repository }}
+    secrets:
+      registry-auths: |
+        - registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
