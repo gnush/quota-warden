@@ -30,5 +30,4 @@ make -f cluster/Makefile clean     # delete both
 in `cluster/Makefile`; `cluster/fixtures/namespaces.yaml` comments say what each
 namespace is for.
 
-Unit suites land in `tests/` as the stages that carry them are built — today a
-bare `pytest` collects nothing.
+Unit suites need no cluster: `.venv/bin/pytest`.
