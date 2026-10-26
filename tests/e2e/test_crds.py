@@ -1,6 +1,7 @@
 """The CRD schema contract the operator reads against."""
 
 import pytest
+from kubernetes.client.exceptions import ApiException
 
 GROUP = "quota-warden.gnush.github.io"
 VERSION = "v1alpha1"
@@ -14,7 +15,11 @@ def create(custom):
     def _create(plural, name, spec):
         body = {
             "apiVersion": f"{GROUP}/{VERSION}",
-            "kind": {"quotawardenconfigs": "QuotaWardenConfig", "quotabases": "QuotaBase"}[plural],
+            "kind": {
+                "quotawardenconfigs": "QuotaWardenConfig",
+                "quotabases": "QuotaBase",
+                "quotaoverrides": "QuotaOverride",
+            }[plural],
             "metadata": {"name": name},
             "spec": spec,
         }
@@ -48,3 +53,15 @@ def test_base_takes_any_key_as_int_or_string(create):
     resources = {"cpu": "18", "persistentvolumeclaims": 30, "example.com/anything": "1Gi"}
     spec = create("quotabases", "e2e-base", {"resources": resources})["spec"]
     assert spec["resources"] == resources
+
+
+def test_override_takes_any_key_as_int_or_string(create):
+    spec = {"namespace": "quota-user-a", "resources": {"cpu": "120", "pods": 30}}
+    assert create("quotaoverrides", "e2e-override", spec)["spec"] == spec
+
+
+@pytest.mark.parametrize("spec", [{"resources": {"cpu": "1"}}, {"namespace": ""}])
+def test_override_requires_a_namespace(create, spec):
+    with pytest.raises(ApiException) as exc:
+        create("quotaoverrides", "e2e-override-no-ns", spec)
+    assert exc.value.status == 422
