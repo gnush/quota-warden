@@ -68,8 +68,12 @@ def quota(hard, labels=OWNED):
     return NS(metadata=NS(labels=labels), spec=NS(hard=dict(hard)))
 
 
-def run(core, base_object):
-    results, issues = sweep(core, base_object, CONFIG)
+def override(name, target, **resources):
+    return {"metadata": {"name": name}, "spec": {"namespace": target, "resources": resources}}
+
+
+def run(core, base_object, overrides=()):
+    results, issues = sweep(core, base_object, list(overrides), CONFIG)
     return {r.namespace: r for r in results}, issues
 
 
@@ -170,7 +174,7 @@ DRY = Config(CONFIG.spec, "quota-warden", "default", True)
 
 def test_dry_run_validates_on_the_server_and_stores_nothing():
     core = FakeCore([namespace("a")])
-    results, _ = sweep(core, base(cpu="1"), DRY)
+    results, _ = sweep(core, base(cpu="1"), [], DRY)
     assert (results[0].action, results[0].dry_run) == ("applied", True)
     assert core.dry_runs == ["a"]
     assert core.writes == [] and core.quotas == {}
@@ -178,20 +182,20 @@ def test_dry_run_validates_on_the_server_and_stores_nothing():
 
 def test_dry_run_still_reports_rejection():
     core = FakeCore([namespace("a")])
-    results, _ = sweep(core, base(bad="1"), DRY)
+    results, _ = sweep(core, base(bad="1"), [], DRY)
     assert (results[0].action, results[0].dry_run) == ("rejected", True)
 
 
 def test_dry_run_does_not_delete():
     core = FakeCore([namespace("a")], {("a", "quota-warden"): quota({"cpu": "1"})})
-    results, _ = sweep(core, None, DRY)
+    results, _ = sweep(core, None, [], DRY)
     assert (results[0].action, results[0].dry_run) == ("deleted", True)
     assert core.writes == [] and ("a", "quota-warden") in core.quotas
 
 
 def test_dry_run_unchanged_is_not_flagged():
     core = FakeCore([namespace("a")], {("a", "quota-warden"): quota({"cpu": "1"})})
-    results, _ = sweep(core, base(cpu="1"), DRY)
+    results, _ = sweep(core, base(cpu="1"), [], DRY)
     assert (results[0].action, results[0].dry_run) == ("unchanged", False)
 
 
@@ -219,10 +223,51 @@ def test_dry_run_reports_orphans_without_deleting():
         [namespace("a")],
         {("a", "quota-warden"): quota({"cpu": "1"}), ("a", "old-name"): quota({"cpu": "1"})},
     )
-    results, _ = sweep(core, base(cpu="1"), DRY)
+    results, _ = sweep(core, base(cpu="1"), [], DRY)
     assert (results[0].action, results[0].orphans, results[0].dry_run) == (
         "unchanged",
         ("old-name",),
         True,
     )
     assert core.writes == []
+
+
+def test_override_applies_only_to_its_namespace():
+    core = FakeCore([namespace("a"), namespace("b")])
+    run(core, base(cpu="18", memory="1"), [override("a-o", "a", cpu="120")])
+    assert core.quotas["a", "quota-warden"].spec.hard == {"cpu": "120", "memory": "1"}
+    assert core.quotas["b", "quota-warden"].spec.hard == {"cpu": "18", "memory": "1"}
+
+
+def test_override_lowers_below_the_base():
+    # replace per key, not max(): an override is how a namespace gets less
+    core = FakeCore([namespace("a")])
+    run(core, base(cpu="18", memory="1"), [override("a-o", "a", cpu="2")])
+    assert core.quotas["a", "quota-warden"].spec.hard == {"cpu": "2", "memory": "1"}
+
+
+def test_override_without_a_base_defines_the_quota():
+    core = FakeCore([namespace("a"), namespace("b")])
+    run(core, None, [override("a-o", "a", cpu="2")])
+    assert core.quotas == {("a", "quota-warden"): core.quotas["a", "quota-warden"]}
+    assert core.quotas["a", "quota-warden"].spec.hard == {"cpu": "2"}
+
+
+def test_removing_the_last_override_without_a_base_deletes_the_quota():
+    core = FakeCore([namespace("a")], {("a", "quota-warden"): quota({"cpu": "2"})})
+    run(core, None, [])
+    assert core.quotas == {}
+
+
+def test_issues_are_reported_once_and_only_for_reconciled_namespaces():
+    core = FakeCore([namespace("a"), namespace("b"), namespace("c", managed=False)])
+    overrides = [override("a-o", "a", cpu="x"), override("c-o", "c", cpu="y")]
+    _, issues = run(core, base(memory="z"), overrides)
+    assert sorted((i.source, i.key) for i in issues) == [("a-o", "cpu"), ("default", "memory")]
+
+
+def test_duplicate_overrides_take_the_max_and_report_both():
+    core = FakeCore([namespace("a")])
+    _, issues = run(core, base(), [override("o1", "a", cpu="2"), override("o2", "a", cpu="3")])
+    assert core.quotas["a", "quota-warden"].spec.hard == {"cpu": "3"}
+    assert sorted(i.source for i in issues if i.kind == "duplicate") == ["o1", "o2"]

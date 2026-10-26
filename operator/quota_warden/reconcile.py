@@ -41,15 +41,28 @@ def read_object(custom, plural: str, name: str) -> dict | None:
         raise
 
 
-def sweep(core, base: dict | None, config: Config) -> tuple[list[Result], list[Issue]]:
-    # the base is the only source and it is cluster-wide, so one merge serves every namespace
-    merged, issues = merge(base or {}, [], [])
-    hard = {key: format_quantity(value) for key, value in merged.items()}
-    results = [
-        reconcile_namespace(core, namespace, config, hard)
-        for namespace in core.list_namespace().items
-    ]
-    return results, issues
+def list_objects(custom, plural: str) -> list[dict]:
+    return custom.list_cluster_custom_object(GROUP, VERSION, plural)["items"]
+
+
+def sweep(
+    core, base: dict | None, overrides: list[dict], config: Config
+) -> tuple[list[Result], list[Issue]]:
+    by_namespace: dict[str, list[dict]] = {}
+    for override in overrides:
+        by_namespace.setdefault(override.get("spec", {}).get("namespace"), []).append(override)
+
+    results = []
+    # dict, not list: the base is parsed once per namespace and would repeat its issues
+    issues: dict[Issue, None] = dict.fromkeys(merge(base or {}, [], [])[1])
+    for namespace in core.list_namespace().items:
+        merged, found = merge(base or {}, by_namespace.get(namespace.metadata.name, []), [])
+        hard = {key: format_quantity(value) for key, value in merged.items()}
+        result = reconcile_namespace(core, namespace, config, hard)
+        if result.action != "skipped":
+            issues.update(dict.fromkeys(found))
+        results.append(result)
+    return results, list(issues)
 
 
 def reconcile_namespace(core, namespace, config: Config, hard: dict[str, str]) -> Result:

@@ -14,7 +14,7 @@ from kubernetes import config as kube_config
 
 from .conditions import Condition, Event, update
 from .config import ConfigError, config_name, load, resync_interval
-from .reconcile import GROUP, read_object, sweep
+from .reconcile import GROUP, list_objects, read_object, sweep
 
 logger = logging.getLogger(__name__)
 
@@ -67,9 +67,9 @@ def run_once(core, custom, name: str, state: State | None = None) -> list[Event]
         logging.INFO,
         f"QuotaBase {config.base_name!r} found"
         if base
-        else f"QuotaBase {config.base_name!r} not found; removing owned quotas",
+        else f"QuotaBase {config.base_name!r} not found",
     )
-    results, issues = sweep(core, base, config)
+    results, issues = sweep(core, base, list_objects(custom, "quotaoverrides"), config)
     for r in results:
         if r.dry_run:
             continue
@@ -80,8 +80,11 @@ def run_once(core, custom, name: str, state: State | None = None) -> list[Event]
     events += _dry_run_events(results, state.dry_run, config)
     if base is None:
         return events
+    base_name = base["metadata"]["name"]
 
-    invalid = "; ".join(f"{i.key}: {i.message}" for i in issues)
+    invalid = "; ".join(
+        f"{i.key}: {i.message}" for i in issues if i.kind == "invalid" and i.source == base_name
+    )
     rejected = "; ".join(f"{r.namespace}: {r.error}" for r in results if r.action == "rejected")
     return events + update(
         custom,
@@ -200,6 +203,7 @@ async def cleanup(memo: kopf.Memo, **_):
 # object they handle, Namespaces included.
 @kopf.on.event("namespaces")
 @kopf.on.event(GROUP, "quotabases")
+@kopf.on.event(GROUP, "quotaoverrides")
 @kopf.on.event(GROUP, "quotawardenconfigs")
 # Async: kopf runs sync handlers in threads, and asyncio.Event is not thread-safe.
 # Per-object memos are shallow copies, so state lives in the shared Sweeper.

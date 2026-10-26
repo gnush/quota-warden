@@ -21,6 +21,9 @@ class FakeCustom:
         except KeyError:
             raise ApiException(status=404) from None
 
+    def list_cluster_custom_object(self, group, version, plural):
+        return {"items": [o for (p, _), o in self.objects.items() if p == plural]}
+
     def patch_cluster_custom_object_status(self, group, version, plural, name, body, **_):
         self.patches += 1
         self.objects[plural, name]["status"] = body["status"]
@@ -96,6 +99,22 @@ def test_invalid_and_rejected_name_the_key_and_the_namespace():
     assert conditions["Applied"][0] == "False" and conditions["Applied"][1].startswith("a: ")
 
 
+def override(name, target, **resources):
+    return {
+        "plural": "quotaoverrides",
+        "metadata": {"name": name},
+        "spec": {"namespace": target, "resources": resources},
+    }
+
+
+def test_override_issues_stay_off_the_base():
+    custom = FakeCustom(
+        config(managedNamespaces=SELECTOR), base(cpu="1"), override("o", "a", cpu="x")
+    )
+    run_once(FakeCore([namespace("a")]), custom, "default")
+    assert custom.conditions("quotabases", "default")["Valid"] == ("True", "")
+
+
 def test_base_is_read_by_base_name():
     custom = FakeCustom(config(managedNamespaces=SELECTOR, baseName="other"), base(cpu="1"))
     core = FakeCore([namespace("a")], {("a", "quota-warden"): quota({"cpu": "1"})})
@@ -154,7 +173,7 @@ def test_standing_config_error_logs_once_then_debug(caplog):
     run_once(FakeCore([]), custom, "default", state)
     infos = [r.message for r in caplog.records if r.levelno == logging.INFO]
     assert "config 'default' loaded" in infos
-    assert "QuotaBase 'default' not found; removing owned quotas" in infos
+    assert "QuotaBase 'default' not found" in infos
 
 
 def drive(script, debounce=0.0, interval=3600.0, fail_on=None):
