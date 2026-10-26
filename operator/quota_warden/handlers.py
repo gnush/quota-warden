@@ -80,11 +80,13 @@ def run_once(core, custom, name: str, state: State | None = None) -> list[Event]
             logger.info("%s: deleted orphaned %s", r.namespace, orphan)
     events += _dry_run_events(results, state.dry_run, config)
     if base is not None:
-        events += update(custom, "quotabases", base, _source_conditions(base, issues, results))
+        events += update(
+            custom, "quotabases", base, _source_conditions(base, issues, results, config.dry_run)
+        )
     skipped = {r.namespace: r.reason for r in results if r.action == "skipped"}
     listed = {r.namespace for r in results}
     for override in overrides:
-        wanted = _source_conditions(override, issues, results)
+        wanted = _source_conditions(override, issues, results, config.dry_run)
         name = override["metadata"]["name"]
         duplicate = "; ".join(
             i.message for i in issues if i.kind == "duplicate" and i.source == name
@@ -108,7 +110,7 @@ def run_once(core, custom, name: str, state: State | None = None) -> list[Event]
     return events
 
 
-def _source_conditions(source: dict, issues, results) -> list[Condition]:
+def _source_conditions(source: dict, issues, results, dry_run: bool) -> list[Condition]:
     name = source["metadata"]["name"]
     invalid = "; ".join(
         f"{i.key}: {i.message}" for i in issues if i.kind == "invalid" and i.source == name
@@ -122,6 +124,8 @@ def _source_conditions(source: dict, issues, results) -> list[Condition]:
         else Condition("Valid", "True", "Parsed"),
         Condition("Applied", "False", "Rejected", rejected)
         if rejected
+        else Condition("Applied", "True", "DryRun", "dryRun is set; nothing is written")
+        if dry_run
         else Condition("Applied", "True", "Applied"),
     ]
 

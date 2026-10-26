@@ -215,6 +215,16 @@ def test_dry_run_event_names_orphans():
     ]
 
 
+def test_dry_run_sets_applied_reason():
+    custom = FakeCustom(
+        config(managedNamespaces=SELECTOR, dryRun=True), base(cpu="1"), override("o", "a", cpu="2")
+    )
+    run_once(FakeCore([namespace("a")]), custom, "default")
+    for plural, name in (("quotabases", "default"), ("quotaoverrides", "o")):
+        applied = custom.objects[plural, name]["status"]["conditions"]
+        assert {c["type"]: c["reason"] for c in applied}["Applied"] == "DryRun"
+
+
 def test_dry_run_sets_ready_reason():
     custom = FakeCustom(config(managedNamespaces=SELECTOR, dryRun=True))
     run_once(FakeCore([]), custom, "default")
