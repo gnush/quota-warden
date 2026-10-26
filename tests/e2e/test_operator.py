@@ -63,43 +63,58 @@ def operator(api, custom, tmp_path_factory):
             text=True,
         ).stdout
     )
-    custom.create_cluster_custom_object(
-        GROUP,
-        VERSION,
-        "quotawardenconfigs",
-        {
-            "apiVersion": f"{GROUP}/{VERSION}",
-            "kind": "QuotaWardenConfig",
-            "metadata": {"name": CONFIG},
-            "spec": {
-                "managedNamespaces": {"matchLabels": MANAGED_LABEL},
-                "protectedNamespaces": ["quota-protected"],
-                "baseName": BASE,
-            },
-        },
-    )
-    api.create_namespace({"metadata": {"name": NAMESPACE}})
+    # a previous run's namespace may still be terminating; creating it would 409
+    wait_for(lambda: not _exists(api.read_namespace, NAMESPACE), timeout=120)
     log = kubeconfig.parent / "operator.log"
-    with log.open("w") as out:
-        process = subprocess.Popen(
-            [sys.executable, "-m", "kopf", "run", "--all-namespaces", "--standalone"]
-            + ["-m", "quota_warden.handlers"],
-            env={**os.environ, "KUBECONFIG": str(kubeconfig), "QUOTA_WARDEN_CONFIG": CONFIG},
-            stdout=out,
-            stderr=subprocess.STDOUT,
-        )
+    process = None
     try:
+        custom.create_cluster_custom_object(
+            GROUP,
+            VERSION,
+            "quotawardenconfigs",
+            {
+                "apiVersion": f"{GROUP}/{VERSION}",
+                "kind": "QuotaWardenConfig",
+                "metadata": {"name": CONFIG},
+                "spec": {
+                    "managedNamespaces": {"matchLabels": MANAGED_LABEL},
+                    "protectedNamespaces": ["quota-protected"],
+                    "baseName": BASE,
+                },
+            },
+        )
+        api.create_namespace({"metadata": {"name": NAMESPACE}})
+        with log.open("w") as out:
+            process = subprocess.Popen(
+                [sys.executable, "-m", "kopf", "run", "--all-namespaces", "--standalone"]
+                + ["-m", "quota_warden.handlers"],
+                env={**os.environ, "KUBECONFIG": str(kubeconfig), "QUOTA_WARDEN_CONFIG": CONFIG},
+                stdout=out,
+                stderr=subprocess.STDOUT,
+            )
         yield process
     finally:
         _delete(custom.delete_cluster_custom_object, GROUP, VERSION, "quotabases", BASE)
-        # the operator removes its own quotas once the base is gone
-        wait_for(lambda: hard(api) is None and hard(api, "quota-user-a") is None)
-        process.terminate()
-        process.wait(timeout=30)
+        if process is not None:
+            # the operator removes its own quotas once the base is gone
+            wait_for(lambda: hard(api) is None and hard(api, "quota-user-a") is None)
+            process.terminate()
+            process.wait(timeout=30)
         _delete(custom.delete_cluster_custom_object, GROUP, VERSION, "quotawardenconfigs", CONFIG)
         _delete(api.delete_namespace, NAMESPACE)
-        if process.returncode not in (0, -15):
+        wait_for(lambda: not _exists(api.read_namespace, NAMESPACE), timeout=120)
+        if process is not None and process.returncode not in (0, -15):
             print(log.read_text())
+
+
+def _exists(fn, *args):
+    try:
+        fn(*args)
+    except ApiException as exc:
+        if exc.status == 404:
+            return False
+        raise
+    return True
 
 
 def _delete(fn, *args):
@@ -297,7 +312,10 @@ def test_override_raises_a_key_and_omitted_keys_keep_the_base(api, base, overrid
     base(cpu="2", memory="1Gi")
     override("e2e-raise", NAMESPACE, cpu="8")
     assert wait_for(lambda: hard(api) == q(cpu="8", memory="1Gi")), hard(api)
-    assert hard(api, "quota-user-a") == q(cpu="2", memory="1Gi")
+    # a sweep writes namespaces in order; quota-user-a can still hold the last test's base
+    assert wait_for(lambda: hard(api, "quota-user-a") == q(cpu="2", memory="1Gi")), hard(
+        api, "quota-user-a"
+    )
 
 
 def test_override_lowers_below_the_base(api, base, override):
