@@ -7,6 +7,7 @@ import asyncio
 import logging
 import os
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 import kopf
 from kubernetes import client
@@ -34,9 +35,12 @@ class State:
         logger.log(level, message)
 
 
-def run_once(core, custom, name: str, state: State | None = None) -> list[Event]:
+def run_once(
+    core, custom, name: str, state: State | None = None, now: datetime | None = None
+) -> list[Event]:
     """One sweep, conditions included. Blocking; returns the Events to post."""
     state = state or State()
+    now = now or datetime.now(UTC)
     body = read_object(custom, "quotawardenconfigs", name)
     try:
         config = load(body)
@@ -70,7 +74,8 @@ def run_once(core, custom, name: str, state: State | None = None) -> list[Event]
         else f"QuotaBase {config.base_name!r} not found",
     )
     overrides = list_objects(custom, "quotaoverrides")
-    results, issues = sweep(core, base, overrides, config)
+    extensions = list_objects(custom, "quotaextensions")
+    results, issues = sweep(core, base, overrides, extensions, config, now)
     for r in results:
         if r.dry_run:
             continue
@@ -233,6 +238,7 @@ async def cleanup(memo: kopf.Memo, **_):
 @kopf.on.event("namespaces")
 @kopf.on.event(GROUP, "quotabases")
 @kopf.on.event(GROUP, "quotaoverrides")
+@kopf.on.event(GROUP, "quotaextensions")
 @kopf.on.event(GROUP, "quotawardenconfigs")
 # Async: kopf runs sync handlers in threads, and asyncio.Event is not thread-safe.
 # Per-object memos are shallow copies, so state lives in the shared Sweeper.

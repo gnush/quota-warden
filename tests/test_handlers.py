@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import UTC, datetime
 
 import pytest
 from kubernetes.client.exceptions import ApiException
@@ -105,6 +106,32 @@ def override(name, target, **resources):
         "metadata": {"name": name},
         "spec": {"namespace": target, "resources": resources},
     }
+
+
+def extension(name, target, expires, **resources):
+    return {
+        "plural": "quotaextensions",
+        "metadata": {"name": name},
+        "spec": {"namespace": target, "expirationDate": expires, "resources": resources},
+    }
+
+
+@pytest.mark.parametrize(
+    ("now", "gpu"),
+    [
+        (datetime(2026, 11, 8, 23, 59, 59, tzinfo=UTC), "9"),
+        (datetime(2026, 11, 9, tzinfo=UTC), "1"),
+    ],
+)
+def test_extension_counts_until_expiry(now, gpu):
+    custom = FakeCustom(
+        config(managedNamespaces=SELECTOR),
+        base(gpu="1"),
+        extension("e", "a", "2026-11-08", gpu="8"),
+    )
+    core = FakeCore([namespace("a")])
+    run_once(core, custom, "default", now=now)
+    assert core.quotas["a", "quota-warden"].spec.hard == {"gpu": gpu}
 
 
 def test_override_issues_stay_off_the_base():

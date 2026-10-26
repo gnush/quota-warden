@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 from types import SimpleNamespace as NS
 
 import pytest
@@ -72,8 +73,16 @@ def override(name, target, **resources):
     return {"metadata": {"name": name}, "spec": {"namespace": target, "resources": resources}}
 
 
-def run(core, base_object, overrides=()):
-    results, issues = sweep(core, base_object, list(overrides), CONFIG)
+NOW = datetime(2026, 11, 8, 12, tzinfo=UTC)
+
+
+def extension(name, target, expires="2026-11-08", **resources):
+    spec = {"namespace": target, "expirationDate": expires, "resources": resources}
+    return {"metadata": {"name": name}, "spec": spec}
+
+
+def run(core, base_object, overrides=(), extensions=(), now=NOW):
+    results, issues = sweep(core, base_object, list(overrides), list(extensions), CONFIG, now)
     return {r.namespace: r for r in results}, issues
 
 
@@ -174,7 +183,7 @@ DRY = Config(CONFIG.spec, "quota-warden", "default", True)
 
 def test_dry_run_validates_on_the_server_and_stores_nothing():
     core = FakeCore([namespace("a")])
-    results, _ = sweep(core, base(cpu="1"), [], DRY)
+    results, _ = sweep(core, base(cpu="1"), [], [], DRY, NOW)
     assert (results[0].action, results[0].dry_run) == ("applied", True)
     assert core.dry_runs == ["a"]
     assert core.writes == [] and core.quotas == {}
@@ -182,20 +191,20 @@ def test_dry_run_validates_on_the_server_and_stores_nothing():
 
 def test_dry_run_still_reports_rejection():
     core = FakeCore([namespace("a")])
-    results, _ = sweep(core, base(bad="1"), [], DRY)
+    results, _ = sweep(core, base(bad="1"), [], [], DRY, NOW)
     assert (results[0].action, results[0].dry_run) == ("rejected", True)
 
 
 def test_dry_run_does_not_delete():
     core = FakeCore([namespace("a")], {("a", "quota-warden"): quota({"cpu": "1"})})
-    results, _ = sweep(core, None, [], DRY)
+    results, _ = sweep(core, None, [], [], DRY, NOW)
     assert (results[0].action, results[0].dry_run) == ("deleted", True)
     assert core.writes == [] and ("a", "quota-warden") in core.quotas
 
 
 def test_dry_run_unchanged_is_not_flagged():
     core = FakeCore([namespace("a")], {("a", "quota-warden"): quota({"cpu": "1"})})
-    results, _ = sweep(core, base(cpu="1"), [], DRY)
+    results, _ = sweep(core, base(cpu="1"), [], [], DRY, NOW)
     assert (results[0].action, results[0].dry_run) == ("unchanged", False)
 
 
@@ -223,7 +232,7 @@ def test_dry_run_reports_orphans_without_deleting():
         [namespace("a")],
         {("a", "quota-warden"): quota({"cpu": "1"}), ("a", "old-name"): quota({"cpu": "1"})},
     )
-    results, _ = sweep(core, base(cpu="1"), [], DRY)
+    results, _ = sweep(core, base(cpu="1"), [], [], DRY, NOW)
     assert (results[0].action, results[0].orphans, results[0].dry_run) == (
         "unchanged",
         ("old-name",),
@@ -318,3 +327,64 @@ def test_rejection_naming_no_key_is_blamed_on_every_contributor():
 
     results, _ = run(Unnamed([namespace("a")]), base(cpu="1"), [override("o", "a", cpu="2")])
     assert results["a"].blame == ("default", "o")
+
+
+def test_extension_adds_on_top_of_the_override():
+    core = FakeCore([namespace("a"), namespace("b")])
+    run(
+        core,
+        base(cpu="18", gpu="1"),
+        [override("a-o", "a", gpu="3")],
+        [extension("a-e", "a", gpu="8")],
+    )
+    assert core.quotas["a", "quota-warden"].spec.hard == {"cpu": "18", "gpu": "11"}
+    assert core.quotas["b", "quota-warden"].spec.hard == {"cpu": "18", "gpu": "1"}
+
+
+def test_extensions_on_one_key_sum():
+    core = FakeCore([namespace("a")])
+    extensions = [extension("e1", "a", gpu="8"), extension("e2", "a", gpu="2")]
+    run(core, base(gpu="1"), [], extensions)
+    assert core.quotas["a", "quota-warden"].spec.hard == {"gpu": "11"}
+
+
+def test_extension_without_base_or_override_defines_the_key():
+    core = FakeCore([namespace("a")])
+    run(core, None, [], [extension("e", "a", gpu="8")])
+    assert core.quotas["a", "quota-warden"].spec.hard == {"gpu": "8"}
+
+
+def test_expired_extension_is_left_out():
+    core = FakeCore([namespace("a")], {("a", "quota-warden"): quota({"gpu": "9"})})
+    later = datetime(2026, 11, 9, tzinfo=UTC)
+    run(core, base(gpu="1"), [], [extension("e", "a", gpu="8")], now=later)
+    assert core.quotas["a", "quota-warden"].spec.hard == {"gpu": "1"}
+
+
+def test_extension_with_a_bad_date_is_left_out():
+    core = FakeCore([namespace("a")])
+    run(core, base(gpu="1"), [], [extension("e", "a", expires="soon", gpu="8")])
+    assert core.quotas["a", "quota-warden"].spec.hard == {"gpu": "1"}
+
+
+def test_issues_include_inert_and_inactive_extensions():
+    core = FakeCore([namespace("a"), namespace("c", managed=False)])
+    extensions = [
+        extension("a-e", "a", cpu="x"),
+        extension("c-e", "c", cpu="y"),
+        extension("gone-e", "gone", cpu="z"),
+        extension("old-e", "a", expires="2026-01-01", cpu="w"),
+    ]
+    _, issues = run(core, base(), [], extensions)
+    assert sorted(i.source for i in issues) == ["a-e", "c-e", "gone-e", "old-e"]
+
+
+def test_rejection_is_blamed_on_the_replace_layer_and_the_extension():
+    core = FakeCore([namespace("a")])
+    results, _ = run(
+        core,
+        base(bad="1"),
+        [override("o", "a", cpu="2")],
+        [extension("e", "a", bad="1"), extension("other", "a", cpu="1")],
+    )
+    assert results["a"].blame == ("default", "e")

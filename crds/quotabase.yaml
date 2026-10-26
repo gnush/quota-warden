@@ -23,7 +23,7 @@ spec:
               type: object
               properties:
                 # Any key, no quantity pattern: the merge validates values and
-                # reports them as conditions (SPEC, Resource keys).
+                # reports them as conditions.
                 resources:
                   type: object
                   additionalProperties:

@@ -3,13 +3,14 @@
 import json
 import re
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from typing import Literal
 
 from kubernetes.client.exceptions import ApiException
 from kubernetes.utils.quantity import parse_quantity
 
 from .config import Config
-from .merge import Issue, merge
+from .merge import Issue, is_active, merge
 from .quantity import format_quantity
 from .targeting import is_managed, is_protected
 
@@ -51,29 +52,42 @@ def list_objects(custom, plural: str) -> list[dict]:
 
 
 def sweep(
-    core, base: dict | None, overrides: list[dict], config: Config
+    core,
+    base: dict | None,
+    overrides: list[dict],
+    extensions: list[dict],
+    config: Config,
+    now: datetime,
 ) -> tuple[list[Result], list[Issue]]:
-    by_namespace: dict[str, list[dict]] = {}
+    by_namespace: dict[str, tuple[list[dict], list[dict]]] = {}
     for override in overrides:
-        by_namespace.setdefault(override.get("spec", {}).get("namespace"), []).append(override)
+        target = override.get("spec", {}).get("namespace")
+        by_namespace.setdefault(target, ([], []))[0].append(override)
+    active = [e for e in extensions if is_active(e, now)]
+    for extension in active:
+        target = extension.get("spec", {}).get("namespace")
+        by_namespace.setdefault(target, ([], []))[1].append(extension)
 
     results = []
     # dict, not list: the base is parsed once per namespace and would repeat its issues
     issues: dict[Issue, None] = dict.fromkeys(merge(base or {}, [], [])[1])
     for namespace in core.list_namespace().items:
-        sources = by_namespace.get(namespace.metadata.name, [])
-        merged, found = merge(base or {}, sources, [])
+        ns_overrides, ns_extensions = by_namespace.get(namespace.metadata.name, ([], []))
+        merged, found = merge(base or {}, ns_overrides, ns_extensions)
         hard = {key: format_quantity(value) for key, value in merged.items()}
         result = reconcile_namespace(core, namespace, config, hard)
         if result.action == "rejected":
-            result = replace(result, blame=_blame(result.error, base, sources))
+            blame = _blame(result.error, base, ns_overrides, ns_extensions)
+            result = replace(result, blame=blame)
         issues.update(dict.fromkeys(found))
         results.append(result)
     # inert, but their values are still checked
     listed = {r.namespace for r in results}
-    for target, sources in by_namespace.items():
+    for target, (ns_overrides, ns_extensions) in by_namespace.items():
         if target not in listed:
-            issues.update(dict.fromkeys(merge({}, sources, [])[1]))
+            issues.update(dict.fromkeys(merge({}, ns_overrides, ns_extensions)[1]))
+    inactive = [e for e in extensions if not is_active(e, now)]
+    issues.update(dict.fromkeys(merge({}, [], inactive)[1]))
     return results, list(issues)
 
 
@@ -81,7 +95,9 @@ def sweep(
 _REJECTED_KEY = re.compile(r"spec\.hard\[([^\]]+)\]")
 
 
-def _blame(error: str, base: dict | None, overrides: list[dict]) -> tuple[str, ...]:
+def _blame(
+    error: str, base: dict | None, overrides: list[dict], extensions: list[dict]
+) -> tuple[str, ...]:
     """The sources that set the rejected keys; every contributor if none can be named."""
 
     def name(source):
@@ -95,9 +111,10 @@ def _blame(error: str, base: dict | None, overrides: list[dict]) -> tuple[str, .
         setters = [name(o) for o in overrides if key in keys(o)]
         if not setters and base is not None and key in keys(base):
             setters = [name(base)]
-        blamed += setters
+        # extensions add on top of whichever replace layer set the key
+        blamed += setters + [name(e) for e in extensions if key in keys(e)]
     if not blamed:
-        blamed = [name(s) for s in ([base] if base else []) + overrides]
+        blamed = [name(s) for s in ([base] if base else []) + overrides + extensions]
     return tuple(dict.fromkeys(blamed))
 
 
