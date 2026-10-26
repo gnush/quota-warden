@@ -25,6 +25,12 @@ def _matches_expression(labels: dict[str, str], expression: dict) -> bool:
     raise SelectorError(f"unknown operator {operator!r} on {key!r}")
 
 
+def validate_selector(selector: dict) -> None:
+    """Raises SelectorError if any expression is malformed, whatever the labels."""
+    for expression in selector.get("matchExpressions") or []:
+        _matches_expression({}, expression)
+
+
 def is_managed(namespace_labels: dict[str, str], name: str, config: dict) -> bool:
     """`config` is QuotaWardenConfig.spec. Raises SelectorError on a malformed selector."""
     selector = config.get("managedNamespaces")

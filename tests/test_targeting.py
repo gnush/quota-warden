@@ -1,6 +1,6 @@
 import pytest
 
-from quota_warden.targeting import SelectorError, is_managed
+from quota_warden.targeting import SelectorError, is_managed, validate_selector
 
 KUBEFLOW = {"matchLabels": {"app.kubernetes.io/part-of": "kubeflow-profile"}}
 
@@ -109,3 +109,10 @@ def test_malformed_expression_raises(expression):
 def test_malformed_selector_raises_for_protected_namespace():
     with pytest.raises(SelectorError):
         managed("kube-system", {"matchExpressions": [{"key": "team", "operator": "Equals"}]})
+
+
+def test_validate_selector_is_independent_of_labels():
+    validate_selector({"matchExpressions": [{"key": "a", "operator": "Exists"}]})
+    validate_selector({})
+    with pytest.raises(SelectorError):
+        validate_selector({"matchExpressions": [{"key": "a", "operator": "Bogus"}]})
