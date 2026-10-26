@@ -41,6 +41,20 @@ A source aimed at an unmanaged, protected or missing namespace is inert
 Expired `QuotaExtension`s are deleted by the operator, whatever namespace they
 target; under `dryRun` they are only reported.
 
+A ResourceQuota in a managed namespace without the
+`app.kubernetes.io/managed-by: quota-warden` label is foreign: it still binds by
+min(). `foreignResourceQuotas` decides what happens:
+
+| Value | Effect |
+|---|---|
+| `report` (default) | `Exclusive=False` on the config, a Warning Event on the Namespace |
+| `delete` | deleted; under `dryRun` only reported |
+| `ignore` | nothing |
+
+A foreign quota named `resourceQuotaName` blocks the namespace outside `delete`:
+nothing is written there, and its sources get `Applied=False` (`Blocked`).
+Edits to any ResourceQuota trigger a sweep, so a hand edit is reverted within seconds.
+
 The quota's `quota-warden.gnush.github.io/provenance` annotation maps each key to
 the sources that set it. Every write and delete is an Event on the quota
 (`kubectl describe resourcequota quota-warden -n <ns>`) naming the keys that changed.

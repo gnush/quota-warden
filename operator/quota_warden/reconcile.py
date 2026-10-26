@@ -27,7 +27,8 @@ PROVENANCE = f"{GROUP}/provenance"
 @dataclass(frozen=True)
 class Result:
     namespace: str
-    action: Literal["applied", "deleted", "unchanged", "skipped", "rejected"]
+    # blocked: a foreign quota holds resourceQuotaName
+    action: Literal["applied", "deleted", "unchanged", "skipped", "rejected", "blocked"]
     hard: dict[str, str] = field(default_factory=dict)
     error: str = ""
     # labeled quotas under another name, e.g. left behind by a resourceQuotaName change
@@ -42,6 +43,9 @@ class Result:
     previous: dict[str, str] = field(default_factory=dict)
     # of the quota written or deleted; Events need it to show in kubectl describe
     uid: str = ""
+    # unlabeled quotas left in place: reported, or under dryRun would be deleted
+    foreign: tuple[str, ...] = ()
+    foreign_deleted: tuple[str, ...] = ()
 
 
 def read_object(custom, plural: str, name: str) -> dict | None:
@@ -85,7 +89,8 @@ def sweep(
         # fixed serialisation: an unchanged sweep must compare equal and write nothing
         annotation = json.dumps(sources, sort_keys=True, separators=(",", ":"))
         result = reconcile_namespace(core, namespace, config, hard, annotation)
-        if result.action == "rejected":
+        if result.action in ("rejected", "blocked"):
+            # a blocked result has no error naming a key, so every contributor is blamed
             blame = _blame(result.error, base, ns_override, ns_extensions)
             result = replace(result, blame=blame)
         issues.update(dict.fromkeys(found))
@@ -173,13 +178,33 @@ def reconcile_namespace(
         for q in quotas
         if q.metadata.name != config.resource_quota_name and _owned(q)
     )
+    # unlabeled, so written by someone else; one under our name is foreign too
+    foreign = tuple(q.metadata.name for q in quotas if not _owned(q))
+    deleting = config.foreign_resource_quotas == "delete"
     if not config.dry_run:
         for orphan in orphans:
             _delete(core, name, orphan)
-    result = _reconcile_owned(core, name, existing, config, hard, annotation)
-    if not orphans:
-        return result
-    return replace(result, orphans=orphans, dry_run=result.dry_run or config.dry_run)
+        if deleting:
+            for quota in foreign:
+                _delete(core, name, quota)
+    squatted = existing is not None and not _owned(existing)
+    if squatted and deleting:
+        # deleted, or under dryRun the apply a real run would make after deleting it
+        existing = None
+    if squatted and not deleting and hard:
+        # taking it over would delete its values, which report and ignore rule out
+        result = Result(name, "blocked", hard)
+    else:
+        result = _reconcile_owned(core, name, existing, config, hard, annotation)
+
+    if deleting and not config.dry_run:
+        result = replace(result, foreign_deleted=foreign)
+    elif config.foreign_resource_quotas != "ignore":
+        # under dryRun with delete: what a real run would delete
+        result = replace(result, foreign=foreign)
+    if orphans or (deleting and foreign):
+        result = replace(result, orphans=orphans, dry_run=result.dry_run or config.dry_run)
+    return result
 
 
 def _reconcile_owned(

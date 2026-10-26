@@ -6,7 +6,7 @@ import pytest
 from kubernetes.client.exceptions import ApiException
 from test_reconcile import OWNED, FakeCore, from_base, namespace, quota
 
-from quota_warden.handlers import State, Sweeper, run_once
+from quota_warden.handlers import State, Sweeper, quota_changed, run_once
 
 SELECTOR = {"matchLabels": {"managed": "yes"}}
 
@@ -548,3 +548,97 @@ def test_deleting_the_quota_is_evented():
 def test_dry_run_posts_no_quota_events():
     custom = FakeCustom(config(managedNamespaces=SELECTOR, dryRun=True), base(cpu="1"))
     assert quota_events(run_once(FakeCore([namespace("a")]), custom, "default")) == []
+
+
+def namespace_events(events, reason):
+    return [
+        (e.body["metadata"]["name"], e.type, e.message)
+        for e in events
+        if e.body.get("kind") == "Namespace" and e.reason == reason
+    ]
+
+
+def test_foreign_quota_is_a_condition_and_one_warning():
+    core = FakeCore([namespace("a")], {("a", "legacy"): quota({"cpu": "9"}, labels={})})
+    custom = FakeCustom(config(managedNamespaces=SELECTOR), base(cpu="1"))
+    state = State()
+    events = run_once(core, custom, "default", state)
+    assert custom.conditions("quotawardenconfigs", "default")["Exclusive"] == (
+        "False",
+        "a/legacy: bind by min()",
+    )
+    assert [(n, t) for n, t, _ in namespace_events(events, "ForeignQuota")] == [("a", "Warning")]
+    assert namespace_events(run_once(core, custom, "default", state), "ForeignQuota") == []
+
+    del core.quotas["a", "legacy"]
+    run_once(core, custom, "default", state)
+    assert custom.conditions("quotawardenconfigs", "default")["Exclusive"][0] == "True"
+    core.quotas["a", "legacy"] = quota({"cpu": "9"}, labels={})
+    assert len(namespace_events(run_once(core, custom, "default", state), "ForeignQuota")) == 1
+
+
+def test_blocked_namespace_marks_its_sources():
+    live = {("a", "quota-warden"): quota({"cpu": "9"}, labels={})}
+    custom = FakeCustom(config(managedNamespaces=SELECTOR), base(cpu="1"))
+    events = run_once(FakeCore([namespace("a")], live), custom, "default")
+    applied = custom.conditions("quotabases", "default")["Applied"]
+    assert applied[0] == "False" and applied[1].startswith("a: a foreign ResourceQuota")
+    assert "nothing is written" in namespace_events(events, "ForeignQuota")[0][2]
+
+
+def test_deleted_foreign_quota_is_evented():
+    core = FakeCore([namespace("a")], {("a", "legacy"): quota({"cpu": "9"}, labels={})})
+    custom = FakeCustom(
+        config(managedNamespaces=SELECTOR, foreignResourceQuotas="delete"), base(cpu="1")
+    )
+    events = run_once(core, custom, "default")
+    assert namespace_events(events, "ForeignQuotaDeleted") == [
+        ("a", "Normal", "deleted ResourceQuota legacy")
+    ]
+    assert namespace_events(events, "ForeignQuota") == []
+    assert custom.conditions("quotawardenconfigs", "default")["Exclusive"][0] == "True"
+
+
+def test_dry_run_delete_reports_what_it_would_delete():
+    core = FakeCore([namespace("a")], {("a", "legacy"): quota({"cpu": "9"}, labels={})})
+    custom = FakeCustom(
+        config(managedNamespaces=SELECTOR, foreignResourceQuotas="delete", dryRun=True),
+        base(cpu="1"),
+    )
+    events = run_once(core, custom, "default")
+    assert "would delete foreign legacy" in namespace_events(events, "DryRun")[0][2]
+    assert namespace_events(events, "ForeignQuota") == []
+    assert custom.conditions("quotawardenconfigs", "default")["Exclusive"] == (
+        "False",
+        "a/legacy: would be deleted",
+    )
+    assert ("a", "legacy") in core.quotas
+
+
+def test_ignore_mode_reports_nothing():
+    core = FakeCore([namespace("a")], {("a", "legacy"): quota({"cpu": "9"}, labels={})})
+    custom = FakeCustom(
+        config(managedNamespaces=SELECTOR, foreignResourceQuotas="ignore"), base(cpu="1")
+    )
+    events = run_once(core, custom, "default")
+    assert namespace_events(events, "ForeignQuota") == []
+    assert custom.conditions("quotawardenconfigs", "default")["Exclusive"][0] == "True"
+
+
+def rq_body(uid="u", used="1", hard="2", labels=None):
+    return {
+        "metadata": {"uid": uid, "labels": labels},
+        "spec": {"hard": {"pods": hard}},
+        "status": {"used": {"pods": used}},
+    }
+
+
+def test_quota_events_count_only_what_a_sweep_reads():
+    seen = {}
+    assert quota_changed(seen, None, rq_body())
+    assert not quota_changed(seen, "MODIFIED", rq_body(used="2"))
+    assert quota_changed(seen, "MODIFIED", rq_body(hard="3"))
+    assert quota_changed(seen, "MODIFIED", rq_body(hard="3", labels={"x": "y"}))
+    assert quota_changed(seen, "DELETED", rq_body(hard="3", labels={"x": "y"}))
+    assert seen == {}
+    assert quota_changed(seen, "ADDED", rq_body(uid="v"))

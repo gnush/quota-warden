@@ -4,6 +4,7 @@ Run: `kopf run --all-namespaces -m quota_warden.handlers`.
 """
 
 import asyncio
+import json
 import logging
 import os
 from dataclasses import dataclass, field
@@ -30,6 +31,7 @@ class State:
     dry_run: dict[str, tuple] = field(default_factory=dict)  # namespace -> last outcome
     logged: dict[str, str] = field(default_factory=dict)  # topic -> last message
     would_reap: set[str] = field(default_factory=set)  # extensions reported under dryRun
+    foreign: set[tuple[str, str]] = field(default_factory=set)  # (namespace, name) reported
 
     def log(self, topic: str, level: int, message: str) -> None:
         if self.logged.get(topic) == message:
@@ -64,7 +66,6 @@ def run_once(
         if config.dry_run
         else Condition("Ready", "True", "Loaded")
     )
-    events = update(custom, "quotawardenconfigs", body, [ready])
     state.log(
         "config", logging.INFO, f"config {name!r} loaded" + (", dry run" if config.dry_run else "")
     )
@@ -80,7 +81,11 @@ def run_once(
     overrides = list_objects(custom, "quotaoverrides")
     extensions = list_objects(custom, "quotaextensions")
     results, issues = sweep(core, base, overrides, extensions, config, now)
+    # one patch: a second update from the same stale body would undo the first
+    events = update(custom, "quotawardenconfigs", body, [ready, _exclusive(results, config)])
     for r in results:
+        for quota in r.foreign_deleted:
+            logger.info("%s: deleted foreign ResourceQuota %s", r.namespace, quota)
         if r.dry_run:
             continue
         if r.action in ("applied", "deleted"):
@@ -88,6 +93,7 @@ def run_once(
         for orphan in r.orphans:
             logger.info("%s: deleted orphaned %s", r.namespace, orphan)
     events += _write_events(results, config)
+    events += _foreign_events(results, state.foreign, config)
     events += _dry_run_events(results, state.dry_run, config)
     if base is not None:
         events += update(
@@ -179,16 +185,61 @@ def _source_conditions(source: dict, issues, results, dry_run: bool) -> list[Con
     rejected = "; ".join(
         f"{r.namespace}: {r.error}" for r in results if r.action == "rejected" and name in r.blame
     )
+    blocked = "; ".join(
+        f"{r.namespace}: a foreign ResourceQuota holds the name; nothing is written"
+        for r in results
+        if r.action == "blocked" and name in r.blame
+    )
     return [
         Condition("Valid", "False", "InvalidValues", invalid)
         if invalid
         else Condition("Valid", "True", "Parsed"),
         Condition("Applied", "False", "Rejected", rejected)
         if rejected
+        else Condition("Applied", "False", "Blocked", blocked)
+        if blocked
         else Condition("Applied", "True", "DryRun", "dryRun is set; nothing is written")
         if dry_run
         else Condition("Applied", "True", "Applied"),
     ]
+
+
+def _exclusive(results, config) -> Condition:
+    if config.foreign_resource_quotas == "ignore":
+        return Condition("Exclusive", "True", "Ignored", "foreignResourceQuotas is ignore")
+    found = [f"{r.namespace}/{q}" for r in results for q in r.foreign]
+    if not found:
+        return Condition("Exclusive", "True", "NoForeignQuotas")
+    # they bind alongside the owned quota by min()
+    verb = "would be deleted" if config.foreign_resource_quotas == "delete" else "bind by min()"
+    return Condition("Exclusive", "False", "ForeignQuotas", f"{', '.join(found)}: {verb}")
+
+
+def _foreign_events(results, reported: set, config) -> list[Event]:
+    """Warning on the Namespace once per foreign quota; again only after it has gone."""
+    events = []
+    present = set()
+    for r in results:
+        namespace = {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": r.namespace}}
+        for quota in r.foreign_deleted:
+            events.append(
+                Event(namespace, "Normal", "ForeignQuotaDeleted", f"deleted ResourceQuota {quota}")
+            )
+        # under dryRun with delete these are reported by the dry-run Event instead
+        if r.dry_run and config.foreign_resource_quotas == "delete":
+            continue
+        for quota in r.foreign:
+            present.add((r.namespace, quota))
+            if (r.namespace, quota) in reported:
+                continue
+            message = f"ResourceQuota {quota} is not managed by quota-warden and binds by min()"
+            if quota == config.resource_quota_name:
+                message += "; it holds the operator's name, so nothing is written"
+            events.append(Event(namespace, "Warning", "ForeignQuota", message))
+            logger.warning("%s: %s", r.namespace, message)
+    reported.clear()
+    reported.update(present)
+    return events
 
 
 def _write_events(results, config) -> list[Event]:
@@ -239,7 +290,7 @@ def _dry_run_events(results, reported: dict, config) -> list[Event]:
             # a change that recurs after being resolved is reported again
             reported.pop(r.namespace, None)
             continue
-        outcome = (r.action, tuple(sorted(r.hard.items())), r.error, r.orphans)
+        outcome = (r.action, tuple(sorted(r.hard.items())), r.error, r.orphans, r.foreign)
         if reported.get(r.namespace) == outcome:
             continue
         reported[r.namespace] = outcome
@@ -252,6 +303,8 @@ def _dry_run_events(results, reported: dict, config) -> list[Event]:
         }.get(r.action, [])
         if r.orphans:
             parts.append(f"would delete orphaned {', '.join(r.orphans)}")
+        if r.foreign and config.foreign_resource_quotas == "delete":
+            parts.append(f"would delete foreign {', '.join(r.foreign)}")
         message = "dry run: " + "; ".join(parts)
         logger.info("%s: %s", r.namespace, message)
         namespace = {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": r.namespace}}
@@ -323,6 +376,7 @@ async def startup(memo: kopf.Memo, **_):
             kopf.event(e.body, type=e.type, reason=e.reason, message=e.message)
 
     memo.sweeper = Sweeper(run, interval.total_seconds())
+    memo.quotas = {}
 
 
 @kopf.on.cleanup()
@@ -332,6 +386,33 @@ async def cleanup(memo: kopf.Memo, **_):
 
 # on.event, not on.create/update: those write progress annotations onto every
 # object they handle, Namespaces included.
+def quota_changed(seen: dict[str, str], event_type: str | None, body) -> bool:
+    """Whether a ResourceQuota event can change a sweep's outcome.
+
+    status.used moves with every pod in the namespace; only what the sweep reads counts.
+    """
+    meta = body["metadata"]
+    if event_type == "DELETED":
+        seen.pop(meta["uid"], None)
+        return True
+    # default=dict: kopf hands out Mapping views, not dicts
+    read = json.dumps(
+        [meta.get("labels"), meta.get("annotations"), body.get("spec")],
+        sort_keys=True,
+        default=dict,
+    )
+    if seen.get(meta["uid"]) == read:
+        return False
+    seen[meta["uid"]] = read
+    return True
+
+
+@kopf.on.event("resourcequotas")
+async def quota_event(memo: kopf.Memo, body, type, **_):
+    if quota_changed(memo.quotas, type, body):
+        memo.sweeper.request()
+
+
 @kopf.on.event("namespaces")
 @kopf.on.event(GROUP, "quotabases")
 @kopf.on.event(GROUP, "quotaoverrides")

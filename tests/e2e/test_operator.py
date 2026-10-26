@@ -241,8 +241,6 @@ def test_a_hand_edit_is_reverted_and_an_added_key_removed(api, base):
     api.patch_namespaced_resource_quota(
         QUOTA, NAMESPACE, {"spec": {"hard": {"cpu": "40", "pods": "1"}}}, field_manager="e2e-hand"
     )
-    # quotas are not watched; the edit is repaired by the next sweep
-    api.patch_namespace(NAMESPACE, {"metadata": {"annotations": {"e2e/poke": str(time.time())}}})
     assert wait_for(lambda: hard(api) == q(cpu="4")), hard(api)
 
 
@@ -496,6 +494,51 @@ def test_a_write_is_evented_on_the_quota(api, base):
         return [e.message for e in events]
 
     assert wait_for(lambda: "cpu 2→3" in applied()), applied()
+
+
+def exclusive(custom):
+    status = custom.get_cluster_custom_object(GROUP, VERSION, "quotawardenconfigs", CONFIG).get(
+        "status", {}
+    )
+    return {c["type"]: c for c in status.get("conditions", [])}.get("Exclusive", {})
+
+
+@pytest.fixture
+def foreign(api):
+    """An unlabeled ResourceQuota in the managed namespace; deleted on teardown."""
+    body = {"metadata": {"name": "e2e-legacy"}, "spec": {"hard": {"cpu": "100"}}}
+    api.create_namespaced_resource_quota(NAMESPACE, body)
+    yield "e2e-legacy"
+    _delete(api.delete_namespaced_resource_quota, "e2e-legacy", NAMESPACE)
+
+
+def test_a_foreign_quota_is_reported_without_a_resync(api, custom, base, foreign):
+    label(api, MANAGED_LABEL[LABEL])
+    base(cpu="2")
+    expected = f"{NAMESPACE}/{foreign}: bind by min()"
+    assert wait_for(lambda: exclusive(custom).get("message") == expected), exclusive(custom)
+    warnings = api.list_namespaced_event(
+        "default", field_selector=f"involvedObject.name={NAMESPACE},reason=ForeignQuota"
+    ).items
+    assert any(foreign in e.message for e in warnings)
+    _delete(api.delete_namespaced_resource_quota, foreign, NAMESPACE)
+    assert wait_for(lambda: exclusive(custom).get("status") == "True"), exclusive(custom)
+
+
+def test_delete_mode_removes_the_foreign_quota(api, custom, base, foreign):
+    label(api, MANAGED_LABEL[LABEL])
+    base(cpu="2")
+
+    def set_mode(value):
+        patch = {"spec": {"foreignResourceQuotas": value}}
+        custom.patch_cluster_custom_object(GROUP, VERSION, "quotawardenconfigs", CONFIG, patch)
+
+    set_mode("delete")
+    try:
+        assert wait_for(lambda: not _exists(api.read_namespaced_resource_quota, foreign, NAMESPACE))
+        assert hard(api) == q(cpu="2")
+    finally:
+        set_mode("report")
 
 
 def test_operator_is_still_running(operator):

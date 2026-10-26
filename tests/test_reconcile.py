@@ -1,3 +1,4 @@
+import dataclasses
 import json
 from datetime import UTC, datetime
 from types import SimpleNamespace as NS
@@ -142,7 +143,6 @@ def test_equal_value_in_another_unit_does_not_write():
     [
         quota({"cpu": "2"}),  # value changed
         quota({"cpu": "1", "memory": "1Gi"}),  # key dropped from the base
-        quota({"cpu": "1"}, labels={}),  # same values, label missing
     ],
 )
 def test_difference_applies(live):
@@ -460,3 +460,47 @@ def test_a_write_records_the_previous_values_and_the_uid():
     live = {("a", "quota-warden"): quota({"cpu": "1", "pods": "1"})}
     results, _ = run(FakeCore([namespace("a")], live), base(cpu="2"))
     assert (results["a"].previous, results["a"].uid) == ({"cpu": "1", "pods": "1"}, "uid-1")
+
+
+def with_mode(mode, dry_run=False):
+    return dataclasses.replace(CONFIG, foreign_resource_quotas=mode, dry_run=dry_run)
+
+
+def test_foreign_quota_is_reported_and_left():
+    core = FakeCore([namespace("a")], {("a", "legacy"): quota({"cpu": "9"}, labels={})})
+    [result], _ = sweep(core, base(cpu="1"), [], [], with_mode("report"), NOW)
+    assert (result.action, result.foreign) == ("applied", ("legacy",))
+    assert ("a", "legacy") in core.quotas
+
+
+@pytest.mark.parametrize(("mode", "foreign"), [("report", ("quota-warden",)), ("ignore", ())])
+def test_foreign_quota_under_our_name_blocks_the_write(mode, foreign):
+    live = {("a", "quota-warden"): quota({"cpu": "9"}, labels={})}
+    core = FakeCore([namespace("a")], live)
+    [result], _ = sweep(core, base(cpu="1"), [], [], with_mode(mode), NOW)
+    assert (result.action, result.foreign, result.blame) == ("blocked", foreign, ("default",))
+    assert core.writes == []
+
+
+def test_delete_mode_deletes_foreign_quotas_and_applies():
+    live = {
+        ("a", "quota-warden"): quota({"cpu": "9"}, labels={}),
+        ("a", "legacy"): quota({"cpu": "9"}, labels={}),
+    }
+    core = FakeCore([namespace("a")], live)
+    [result], _ = sweep(core, base(cpu="1"), [], [], with_mode("delete"), NOW)
+    assert (result.action, result.foreign, result.foreign_deleted) == (
+        "applied",
+        (),
+        ("quota-warden", "legacy"),
+    )
+    assert core.quotas.keys() == {("a", "quota-warden")}
+    assert core.quotas["a", "quota-warden"].metadata.labels == OWNED
+
+
+def test_delete_mode_under_dry_run_deletes_nothing():
+    live = {("a", "legacy"): quota({"cpu": "9"}, labels={})}
+    core = FakeCore([namespace("a")], live)
+    [result], _ = sweep(core, base(cpu="1"), [], [], with_mode("delete", dry_run=True), NOW)
+    assert (result.foreign, result.foreign_deleted, result.dry_run) == (("legacy",), (), True)
+    assert core.writes == []
