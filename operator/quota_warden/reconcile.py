@@ -1,6 +1,7 @@
 """One sweep over all namespaces, without kopf."""
 
 import json
+import re
 from dataclasses import dataclass, field, replace
 from typing import Literal
 
@@ -30,6 +31,8 @@ class Result:
     orphans: tuple[str, ...] = ()
     # action and orphans describe what a real run would do; nothing was stored
     dry_run: bool = False
+    # sources a rejection is attributed to
+    blame: tuple[str, ...] = ()
 
 
 def read_object(custom, plural: str, name: str) -> dict | None:
@@ -56,13 +59,40 @@ def sweep(
     # dict, not list: the base is parsed once per namespace and would repeat its issues
     issues: dict[Issue, None] = dict.fromkeys(merge(base or {}, [], [])[1])
     for namespace in core.list_namespace().items:
-        merged, found = merge(base or {}, by_namespace.get(namespace.metadata.name, []), [])
+        sources = by_namespace.get(namespace.metadata.name, [])
+        merged, found = merge(base or {}, sources, [])
         hard = {key: format_quantity(value) for key, value in merged.items()}
         result = reconcile_namespace(core, namespace, config, hard)
+        if result.action == "rejected":
+            result = replace(result, blame=_blame(result.error, base, sources))
         if result.action != "skipped":
             issues.update(dict.fromkeys(found))
         results.append(result)
     return results, list(issues)
+
+
+# the API server names each bad key as spec.hard[<key>]
+_REJECTED_KEY = re.compile(r"spec\.hard\[([^\]]+)\]")
+
+
+def _blame(error: str, base: dict | None, overrides: list[dict]) -> tuple[str, ...]:
+    """The sources that set the rejected keys; every contributor if none can be named."""
+
+    def name(source):
+        return source.get("metadata", {}).get("name", "")
+
+    def keys(source):
+        return (source.get("spec", {}).get("resources") or {}).keys()
+
+    blamed = []
+    for key in dict.fromkeys(_REJECTED_KEY.findall(error)):
+        setters = [name(o) for o in overrides if key in keys(o)]
+        if not setters and base is not None and key in keys(base):
+            setters = [name(base)]
+        blamed += setters
+    if not blamed:
+        blamed = [name(s) for s in ([base] if base else []) + overrides]
+    return tuple(dict.fromkeys(blamed))
 
 
 def reconcile_namespace(core, namespace, config: Config, hard: dict[str, str]) -> Result:

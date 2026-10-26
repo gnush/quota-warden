@@ -271,3 +271,24 @@ def test_duplicate_overrides_take_the_max_and_report_both():
     _, issues = run(core, base(), [override("o1", "a", cpu="2"), override("o2", "a", cpu="3")])
     assert core.quotas["a", "quota-warden"].spec.hard == {"cpu": "3"}
     assert sorted(i.source for i in issues if i.kind == "duplicate") == ["o1", "o2"]
+
+
+def test_rejection_is_blamed_on_the_override_that_set_the_key():
+    core = FakeCore([namespace("a")])
+    results, _ = run(core, base(cpu="1", bad="1"), [override("o", "a", bad="2")])
+    assert results["a"].blame == ("o",)
+
+
+def test_rejection_of_a_base_key_is_blamed_on_the_base():
+    core = FakeCore([namespace("a")])
+    results, _ = run(core, base(bad="1"), [override("o", "a", cpu="2")])
+    assert results["a"].blame == ("default",)
+
+
+def test_rejection_naming_no_key_is_blamed_on_every_contributor():
+    class Unnamed(FakeCore):
+        def patch_namespaced_resource_quota(self, *args, **kwargs):
+            raise ApiException(status=422, body=json.dumps({"message": "invalid"}))
+
+    results, _ = run(Unnamed([namespace("a")]), base(cpu="1"), [override("o", "a", cpu="2")])
+    assert results["a"].blame == ("default", "o")

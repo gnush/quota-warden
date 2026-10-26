@@ -115,6 +115,46 @@ def test_override_issues_stay_off_the_base():
     assert custom.conditions("quotabases", "default")["Valid"] == ("True", "")
 
 
+def test_override_gets_its_own_conditions():
+    custom = FakeCustom(
+        config(managedNamespaces=SELECTOR),
+        base(cpu="1"),
+        override("o1", "a", cpu="2", memory="x"),
+        override("o2", "a", cpu="3"),
+    )
+    run_once(FakeCore([namespace("a")]), custom, "default")
+    o1 = custom.conditions("quotaoverrides", "o1")
+    assert o1["Valid"][0] == "False" and "memory" in o1["Valid"][1]
+    assert o1["Applied"] == ("True", "")
+    assert o1["Duplicate"] == ("True", "cpu also set by o2; using the maximum")
+    assert custom.conditions("quotaoverrides", "o2")["Duplicate"][1].startswith(
+        "cpu also set by o1;"
+    )
+
+
+def test_rejection_marks_only_the_source_of_the_key():
+    custom = FakeCustom(
+        config(managedNamespaces=SELECTOR), base(cpu="1"), override("o", "a", bad="1")
+    )
+    run_once(FakeCore([namespace("a")]), custom, "default")
+    assert custom.conditions("quotaoverrides", "o")["Applied"][0] == "False"
+    assert custom.conditions("quotabases", "default")["Applied"] == ("True", "")
+
+
+def test_override_without_a_base_gets_conditions():
+    custom = FakeCustom(config(managedNamespaces=SELECTOR), override("o", "a", cpu="1"))
+    core = FakeCore([namespace("a")])
+    run_once(core, custom, "default")
+    assert core.quotas["a", "quota-warden"].spec.hard == {"cpu": "1"}
+    assert custom.conditions("quotaoverrides", "o")["Applied"] == ("True", "")
+
+
+def test_override_on_an_unreconciled_namespace_claims_no_write():
+    custom = FakeCustom(config(managedNamespaces=SELECTOR), override("o", "a", cpu="1"))
+    run_once(FakeCore([namespace("a", managed=False)]), custom, "default")
+    assert "Applied" not in custom.conditions("quotaoverrides", "o")
+
+
 def test_base_is_read_by_base_name():
     custom = FakeCustom(config(managedNamespaces=SELECTOR, baseName="other"), base(cpu="1"))
     core = FakeCore([namespace("a")], {("a", "quota-warden"): quota({"cpu": "1"})})

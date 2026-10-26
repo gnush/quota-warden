@@ -64,11 +64,11 @@ def merge(
     for key, values in by_key.items():
         merged[key] = max(value for _, value in values)
         if len(values) > 1:
-            names = ", ".join(name for name, _ in values)
-            issues.extend(
-                Issue("duplicate", name, key, f"{key} also set by {names}; using the maximum")
-                for name, _ in values
-            )
+            for name, _ in values:
+                others = ", ".join(other for other, _ in values if other != name)
+                issues.append(
+                    Issue("duplicate", name, key, f"{key} also set by {others}; using the maximum")
+                )
 
     for extension in extensions:
         for key, value in _resources(extension, issues).items():

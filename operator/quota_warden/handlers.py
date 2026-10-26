@@ -69,7 +69,8 @@ def run_once(core, custom, name: str, state: State | None = None) -> list[Event]
         if base
         else f"QuotaBase {config.base_name!r} not found",
     )
-    results, issues = sweep(core, base, list_objects(custom, "quotaoverrides"), config)
+    overrides = list_objects(custom, "quotaoverrides")
+    results, issues = sweep(core, base, overrides, config)
     for r in results:
         if r.dry_run:
             continue
@@ -78,27 +79,43 @@ def run_once(core, custom, name: str, state: State | None = None) -> list[Event]
         for orphan in r.orphans:
             logger.info("%s: deleted orphaned %s", r.namespace, orphan)
     events += _dry_run_events(results, state.dry_run, config)
-    if base is None:
-        return events
-    base_name = base["metadata"]["name"]
+    if base is not None:
+        events += update(custom, "quotabases", base, _source_conditions(base, issues, results))
+    reconciled = {r.namespace for r in results if r.action != "skipped"}
+    for override in overrides:
+        wanted = _source_conditions(override, issues, results)
+        name = override["metadata"]["name"]
+        duplicate = "; ".join(
+            i.message for i in issues if i.kind == "duplicate" and i.source == name
+        )
+        wanted.append(
+            Condition("Duplicate", "True", "DuplicateKeys", duplicate)
+            if duplicate
+            else Condition("Duplicate", "False", "Unique")
+        )
+        # Applied on an unreconciled target would claim a write that never happened
+        if override.get("spec", {}).get("namespace") not in reconciled:
+            wanted = [c for c in wanted if c.type != "Applied"]
+        events += update(custom, "quotaoverrides", override, wanted)
+    return events
 
+
+def _source_conditions(source: dict, issues, results) -> list[Condition]:
+    name = source["metadata"]["name"]
     invalid = "; ".join(
-        f"{i.key}: {i.message}" for i in issues if i.kind == "invalid" and i.source == base_name
+        f"{i.key}: {i.message}" for i in issues if i.kind == "invalid" and i.source == name
     )
-    rejected = "; ".join(f"{r.namespace}: {r.error}" for r in results if r.action == "rejected")
-    return events + update(
-        custom,
-        "quotabases",
-        base,
-        [
-            Condition("Valid", "False", "InvalidValues", invalid)
-            if invalid
-            else Condition("Valid", "True", "Parsed"),
-            Condition("Applied", "False", "Rejected", rejected)
-            if rejected
-            else Condition("Applied", "True", "Applied"),
-        ],
+    rejected = "; ".join(
+        f"{r.namespace}: {r.error}" for r in results if r.action == "rejected" and name in r.blame
     )
+    return [
+        Condition("Valid", "False", "InvalidValues", invalid)
+        if invalid
+        else Condition("Valid", "True", "Parsed"),
+        Condition("Applied", "False", "Rejected", rejected)
+        if rejected
+        else Condition("Applied", "True", "Applied"),
+    ]
 
 
 def _dry_run_events(results, reported: dict, config) -> list[Event]:
