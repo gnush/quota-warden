@@ -27,6 +27,13 @@ restore() { [ -z "$$prev" ] || kubectl config use-context "$$prev" >/dev/null 2>
 trap restore EXIT
 endef
 
+# objects created right after `apply` 404 until the CRD is Established
+define INSTALL
+kubectl --context $(1) apply -f $(ROOT)/crds/
+kubectl --context $(1) wait --for condition=established --timeout=60s -f $(ROOT)/crds/
+kubectl --context $(1) apply -f $(ROOT)/cluster/fixtures/namespaces.yaml
+endef
+
 # Idempotent: `make e2e` twice must not fail on an existing cluster
 up:
 	@$(RESTORE_CONTEXT); \
@@ -34,7 +41,7 @@ up:
 		|| kind create cluster --name $(KIND_CLUSTER) --image $(NODE_IMAGE) \
 			--config $(ROOT)/cluster/kind-config.yaml; \
 	$(CONTEXT_PRESENT) || kind export kubeconfig --name $(KIND_CLUSTER)
-	kubectl --context $(CONTEXT) apply -f $(ROOT)/cluster/fixtures/namespaces.yaml
+	$(call INSTALL,$(CONTEXT))
 
 # a pass here is not the gate, a failure is worth reading
 compat:
@@ -43,8 +50,8 @@ compat:
 		|| kind create cluster --name $(KIND_CLUSTER)-compat --image $(COMPAT_IMAGE) \
 			--config $(ROOT)/cluster/kind-config.yaml; \
 	kubectl config get-contexts $(COMPAT_CONTEXT) >/dev/null 2>&1 \
-		|| kind export kubeconfig --name $(KIND_CLUSTER)-compat; \
-	kubectl --context $(COMPAT_CONTEXT) apply -f $(ROOT)/cluster/fixtures/namespaces.yaml
+		|| kind export kubeconfig --name $(KIND_CLUSTER)-compat
+	$(call INSTALL,$(COMPAT_CONTEXT))
 	$(MAKE) -f $(ROOT)/cluster/Makefile e2e KIND_CLUSTER=$(KIND_CLUSTER)-compat NO_UP=1
 
 down:

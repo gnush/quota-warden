@@ -34,3 +34,9 @@ def api():
         )
 
     return client.CoreV1Api()
+
+
+@pytest.fixture(scope="session")
+def custom(api):
+    # depends on `api` for the kubeconfig load and version check
+    return client.CustomObjectsApi()

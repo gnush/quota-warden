@@ -1,0 +1,33 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: quotabases.quota-warden.gnush.github.io
+spec:
+  group: quota-warden.gnush.github.io
+  scope: Cluster
+  names:
+    kind: QuotaBase
+    plural: quotabases
+    singular: quotabase
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                # Any key, no quantity pattern: the merge validates values and
+                # reports them as conditions (SPEC, Resource keys).
+                resources:
+                  type: object
+                  additionalProperties:
+                    x-kubernetes-int-or-string: true
+            status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
