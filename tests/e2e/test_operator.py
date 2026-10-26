@@ -1,4 +1,4 @@
-"""The operator against the kind cluster, with QuotaBase and QuotaOverride as sources.
+"""The operator against the kind cluster, with every source kind.
 
 The operator runs as `kopf run` in a subprocess with a kubeconfig holding only
 E2E_CONTEXT, so it cannot reach whatever cluster the ambient context points at.
@@ -65,8 +65,7 @@ def operator(api, custom, tmp_path_factory):
     )
     # a previous run's namespace may still be terminating; creating it would 409
     wait_for(lambda: not _exists(api.read_namespace, NAMESPACE), timeout=120)
-    log = kubeconfig.parent / "operator.log"
-    process = None
+    process = Operator(kubeconfig)
     try:
         custom.create_cluster_custom_object(
             GROUP,
@@ -84,27 +83,56 @@ def operator(api, custom, tmp_path_factory):
             },
         )
         api.create_namespace({"metadata": {"name": NAMESPACE}})
-        with log.open("w") as out:
-            process = subprocess.Popen(
-                [sys.executable, "-m", "kopf", "run", "--all-namespaces", "--standalone"]
-                + ["-m", "quota_warden.handlers"],
-                env={**os.environ, "KUBECONFIG": str(kubeconfig), "QUOTA_WARDEN_CONFIG": CONFIG},
-                stdout=out,
-                stderr=subprocess.STDOUT,
-            )
+        process.start()
         yield process
     finally:
         _delete(custom.delete_cluster_custom_object, GROUP, VERSION, "quotabases", BASE)
-        if process is not None:
+        if process.poll() is None:
             # the operator removes its own quotas once the base is gone
             wait_for(lambda: hard(api) is None and hard(api, "quota-user-a") is None)
-            process.terminate()
-            process.wait(timeout=30)
+        failed = process.stop()
         _delete(custom.delete_cluster_custom_object, GROUP, VERSION, "quotawardenconfigs", CONFIG)
         _delete(api.delete_namespace, NAMESPACE)
         wait_for(lambda: not _exists(api.read_namespace, NAMESPACE), timeout=120)
-        if process is not None and process.returncode not in (0, -15):
-            print(log.read_text())
+        if failed:
+            print(process.log.read_text())
+
+
+class Operator:
+    """`kopf run` as a subprocess; restartable, the log spans every run."""
+
+    def __init__(self, kubeconfig):
+        self.kubeconfig = kubeconfig
+        self.log = kubeconfig.parent / "operator.log"
+        self.process = None
+
+    def start(self):
+        with self.log.open("a") as out:
+            self.process = subprocess.Popen(
+                [sys.executable, "-m", "kopf", "run", "--all-namespaces", "--standalone"]
+                + ["-m", "quota_warden.handlers"],
+                env={
+                    **os.environ,
+                    "KUBECONFIG": str(self.kubeconfig),
+                    "QUOTA_WARDEN_CONFIG": CONFIG,
+                },
+                stdout=out,
+                stderr=subprocess.STDOUT,
+            )
+
+    def poll(self):
+        return None if self.process is None else self.process.poll()
+
+    def stop(self) -> bool:
+        """Whether the process had already died or exited uncleanly."""
+        if self.process is None:
+            return False
+        if self.process.poll() is None:
+            self.process.terminate()
+        self.process.wait(timeout=30)
+        failed = self.process.returncode not in (0, -15)
+        self.process = None
+        return failed
 
 
 def _exists(fn, *args):
@@ -365,6 +393,80 @@ def test_deleting_the_base_removes_the_quota(api, custom, base):
     wait_for(lambda: hard(api))
     custom.delete_cluster_custom_object(GROUP, VERSION, "quotabases", BASE)
     assert wait_for(lambda: hard(api) is None and hard(api, "quota-user-a") is None)
+
+
+@pytest.fixture
+def extension(custom, operator):
+    """Create an extension; any left are deleted on teardown."""
+    created = []
+
+    def _create(name, target, expires, **resources):
+        body = {
+            "apiVersion": f"{GROUP}/{VERSION}",
+            "kind": "QuotaExtension",
+            "metadata": {"name": name},
+            "spec": {"namespace": target, "expirationDate": expires, "resources": resources},
+        }
+        custom.create_cluster_custom_object(GROUP, VERSION, "quotaextensions", body)
+        created.append(name)
+
+    yield _create
+    for name in created:
+        _delete(custom.delete_cluster_custom_object, GROUP, VERSION, "quotaextensions", name)
+
+
+# the cluster's clock is real; these dates are safely on either side of it
+FUTURE = "2099-12-31"
+PAST = "2020-01-01"
+
+
+def extension_exists(custom, name):
+    return _exists(custom.get_cluster_custom_object, GROUP, VERSION, "quotaextensions", name)
+
+
+def test_extension_adds_on_top_of_the_override(api, base, override, extension):
+    label(api, MANAGED_LABEL[LABEL])
+    base(cpu="2", memory="1Gi")
+    override("e2e-ext-base", NAMESPACE, cpu="4")
+    extension("e2e-ext-raise", NAMESPACE, FUTURE, cpu="8")
+    assert wait_for(lambda: hard(api) == q(cpu="12", memory="1Gi")), hard(api)
+
+
+def test_extensions_on_one_key_sum(api, base, extension):
+    label(api, MANAGED_LABEL[LABEL])
+    base(cpu="2")
+    extension("e2e-ext-one", NAMESPACE, FUTURE, cpu="1")
+    extension("e2e-ext-two", NAMESPACE, FUTURE, cpu="500m")
+    assert wait_for(lambda: hard(api) == q(cpu="3.5")), hard(api)
+
+
+def test_extension_created_expired_is_deleted_and_never_applied(api, custom, base, extension):
+    label(api, MANAGED_LABEL[LABEL])
+    base(cpu="2")
+    wait_for(lambda: hard(api) == q(cpu="2"))
+    extension("e2e-ext-past", NAMESPACE, PAST, cpu="8")
+    assert wait_for(lambda: not extension_exists(custom, "e2e-ext-past"))
+    assert hard(api) == q(cpu="2")
+
+
+def test_expiry_while_the_operator_is_stopped(api, custom, operator, base, extension):
+    label(api, MANAGED_LABEL[LABEL])
+    base(cpu="2")
+    extension("e2e-ext-stopped", NAMESPACE, FUTURE, cpu="8")
+    assert wait_for(lambda: hard(api) == q(cpu="10")), hard(api)
+    assert not operator.stop()
+    try:
+        # stands in for the clock passing expirationDate while nothing is watching
+        patch = {"spec": {"expirationDate": PAST}}
+        custom.patch_cluster_custom_object(
+            GROUP, VERSION, "quotaextensions", "e2e-ext-stopped", patch
+        )
+        time.sleep(2)
+        assert hard(api) == q(cpu="10")
+    finally:
+        operator.start()
+    assert wait_for(lambda: hard(api) == q(cpu="2")), hard(api)
+    assert wait_for(lambda: not extension_exists(custom, "e2e-ext-stopped"))
 
 
 def test_operator_is_still_running(operator):
