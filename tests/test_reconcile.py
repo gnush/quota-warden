@@ -32,6 +32,7 @@ class FakeCore:
         self.quotas = quotas or {}
         self.writes = []
         self.dry_runs = []
+        self.conflict = False  # replace fails as if the quota changed since it was listed
 
     def list_namespace(self):
         return NS(items=self.namespaces)
@@ -62,13 +63,26 @@ class FakeCore:
         self.writes.append(("apply", namespace, name))
         self.quotas[namespace, name] = quota(hard, body["metadata"]["labels"])
 
+    def replace_namespaced_resource_quota(self, name, namespace, body, **kwargs):
+        dry_run = kwargs.pop("dry_run", None)
+        assert dry_run in (None, "All")
+        assert kwargs == {"field_manager": FIELD_MANAGER}
+        if self.conflict:
+            raise ApiException(status=409)
+        if dry_run:
+            self.dry_runs.append(namespace)
+            return
+        self.writes.append(("replace", namespace, name))
+        self.quotas[namespace, name] = quota(body["spec"]["hard"], body["metadata"]["labels"])
+
     def delete_namespaced_resource_quota(self, name, namespace):
         self.writes.append(("delete", namespace, name))
         del self.quotas[namespace, name]
 
 
 def quota(hard, labels=OWNED):
-    return NS(metadata=NS(labels=labels), spec=NS(hard=dict(hard)))
+    meta = NS(labels=labels, annotations=None, resource_version="1")
+    return NS(metadata=meta, spec=NS(hard=dict(hard)))
 
 
 def override(name, target, **resources):
@@ -123,6 +137,31 @@ def test_difference_applies(live):
     results, _ = run(core, base(cpu="1"))
     assert results["a"].action == "applied"
     assert core.quotas["a", "quota-warden"].spec.hard == {"cpu": "1"}
+
+
+def test_a_key_someone_else_added_is_removed_by_replacing():
+    live = quota({"cpu": "1", "pods": "1"})
+    core = FakeCore([namespace("a")], {("a", "quota-warden"): live})
+    results, _ = run(core, base(cpu="2"))
+    assert results["a"].action == "applied"
+    assert core.writes == [("replace", "a", "quota-warden")]
+    assert core.quotas["a", "quota-warden"].spec.hard == {"cpu": "2"}
+    assert core.quotas["a", "quota-warden"].metadata.labels == OWNED
+
+
+def test_replace_conflict_is_left_to_the_next_sweep():
+    core = FakeCore([namespace("a")], {("a", "quota-warden"): quota({"cpu": "1", "pods": "1"})})
+    core.conflict = True
+    results, _ = run(core, base(cpu="1"))
+    assert results["a"].action == "unchanged"
+    assert core.quotas["a", "quota-warden"].spec.hard == {"cpu": "1", "pods": "1"}
+
+
+def test_dry_run_replace_stores_nothing():
+    core = FakeCore([namespace("a")], {("a", "quota-warden"): quota({"cpu": "1", "pods": "1"})})
+    results, _ = sweep(core, base(cpu="1"), [], [], DRY, NOW)
+    assert (results[0].action, results[0].dry_run) == ("applied", True)
+    assert core.writes == [] and core.dry_runs == ["a"]
 
 
 def test_missing_base_deletes_the_owned_quota():

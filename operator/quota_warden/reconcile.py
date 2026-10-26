@@ -183,16 +183,22 @@ def _reconcile_owned(core, name: str, existing, config: Config, hard: dict[str, 
         _delete(core, name, config.resource_quota_name)
         return Result(name, "deleted")
 
-    # Compares the whole key set: a key someone else added makes every sweep
-    # re-apply, harmlessly; foreign keys are not removed yet.
-    if owned and _same(existing.spec.hard or {}, hard):
+    live = (existing.spec.hard or {}) if owned else {}
+    if owned and _same(live, hard):
         return Result(name, "unchanged", hard)
 
     try:
-        _apply(core, name, config.resource_quota_name, hard, config.dry_run)
+        # apply cannot remove a key another field manager owns, e.g. one added by kubectl edit
+        if live.keys() - hard.keys():
+            _replace(core, name, existing, hard, config.dry_run)
+        else:
+            _apply(core, name, config.resource_quota_name, hard, config.dry_run)
     except ApiException as exc:
         if exc.status == 422:
             return Result(name, "rejected", hard, _message(exc), dry_run=config.dry_run)
+        # edited since it was listed; the next sweep sees the new state
+        if exc.status == 409:
+            return Result(name, "unchanged", hard)
         raise
     return Result(name, "applied", hard, dry_run=config.dry_run)
 
@@ -234,6 +240,31 @@ def _apply(core, namespace: str, name: str, hard: dict[str, str], dry_run: bool)
         field_manager=FIELD_MANAGER,
         force=True,
         _content_type="application/apply-patch+yaml",
+        **options,
+    )
+
+
+def _replace(core, namespace: str, existing, hard: dict[str, str], dry_run: bool) -> None:
+    """PUT `hard` over the listed object; its resourceVersion makes a concurrent edit a 409."""
+    meta = existing.metadata
+    body = {
+        "apiVersion": "v1",
+        "kind": "ResourceQuota",
+        "metadata": {
+            "name": meta.name,
+            "namespace": namespace,
+            "labels": meta.labels,
+            "annotations": meta.annotations,
+            "resourceVersion": meta.resource_version,
+        },
+        "spec": {"hard": hard},
+    }
+    options = {"dry_run": "All"} if dry_run else {}
+    core.replace_namespaced_resource_quota(
+        meta.name,
+        namespace,
+        body,
+        field_manager=FIELD_MANAGER,
         **options,
     )
 

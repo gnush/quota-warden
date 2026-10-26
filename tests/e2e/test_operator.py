@@ -232,6 +232,19 @@ def test_a_sweep_with_nothing_to_change_writes_nothing(api, custom, base):
     )
 
 
+def test_a_hand_edit_is_reverted_and_an_added_key_removed(api, base):
+    label(api, MANAGED_LABEL[LABEL])
+    base(cpu="4")
+    wait_for(lambda: hard(api) == q(cpu="4"))
+    # another field manager: apply with force takes back cpu but would keep pods
+    api.patch_namespaced_resource_quota(
+        QUOTA, NAMESPACE, {"spec": {"hard": {"cpu": "40", "pods": "1"}}}, field_manager="e2e-hand"
+    )
+    # quotas are not watched; the edit is repaired by the next sweep
+    api.patch_namespace(NAMESPACE, {"metadata": {"annotations": {"e2e/poke": str(time.time())}}})
+    assert wait_for(lambda: hard(api) == q(cpu="4")), hard(api)
+
+
 def test_malformed_selector_sets_the_condition_and_leaves_quotas(api, custom, base):
     label(api, MANAGED_LABEL[LABEL])
     base(cpu="4")
