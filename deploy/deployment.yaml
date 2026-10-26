@@ -24,7 +24,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: operator
-          # digest pin when deploying for real: the tag is rebuilt on every push
+          # release tag, bumped with the git tag
           image: ghcr.io/gnush/quota-warden:1.0.0
           args:
             - --liveness=http://0.0.0.0:8080/healthz
