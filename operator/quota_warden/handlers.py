@@ -6,6 +6,7 @@ Run: `kopf run --all-namespaces -m quota_warden.handlers`.
 import asyncio
 import logging
 import os
+from dataclasses import dataclass, field
 
 import kopf
 from kubernetes import client
@@ -18,18 +19,30 @@ from .reconcile import GROUP, read_object, sweep
 logger = logging.getLogger(__name__)
 
 
-def run_once(core, custom, name: str, reported: dict | None = None) -> list[Event]:
-    """One sweep, conditions included. Blocking; returns the Events to post.
+@dataclass
+class State:
+    """Carried across sweeps, so a standing situation is reported once, not every sweep."""
 
-    `reported` carries the last dry-run outcome per namespace across sweeps, so a
-    pending change is announced once, not on every sweep.
-    """
+    dry_run: dict[str, tuple] = field(default_factory=dict)  # namespace -> last outcome
+    logged: dict[str, str] = field(default_factory=dict)  # topic -> last message
+
+    def log(self, topic: str, level: int, message: str) -> None:
+        if self.logged.get(topic) == message:
+            logger.debug(message)
+            return
+        self.logged[topic] = message
+        logger.log(level, message)
+
+
+def run_once(core, custom, name: str, state: State | None = None) -> list[Event]:
+    """One sweep, conditions included. Blocking; returns the Events to post."""
+    state = state or State()
     body = read_object(custom, "quotawardenconfigs", name)
     try:
         config = load(body)
     except ConfigError as exc:
         # fail-safe: existing quotas stay as they are
-        logger.error("config %r: %s; touching no namespace", name, exc)
+        state.log("config", logging.ERROR, f"config {name!r}: {exc}; touching no namespace")
         if body is None:
             return []
         return update(
@@ -44,10 +57,18 @@ def run_once(core, custom, name: str, reported: dict | None = None) -> list[Even
         else Condition("Ready", "True", "Loaded")
     )
     events = update(custom, "quotawardenconfigs", body, [ready])
+    state.log(
+        "config", logging.INFO, f"config {name!r} loaded" + (", dry run" if config.dry_run else "")
+    )
 
     base = read_object(custom, "quotabases", config.base_name)
-    if base is None:
-        logger.info("QuotaBase %r not found; removing owned quotas", config.base_name)
+    state.log(
+        "base",
+        logging.INFO,
+        f"QuotaBase {config.base_name!r} found"
+        if base
+        else f"QuotaBase {config.base_name!r} not found; removing owned quotas",
+    )
     results, issues = sweep(core, base, config)
     for r in results:
         if r.dry_run:
@@ -56,7 +77,7 @@ def run_once(core, custom, name: str, reported: dict | None = None) -> list[Even
             logger.info("%s: %s %s", r.namespace, r.action, r.hard)
         for orphan in r.orphans:
             logger.info("%s: deleted orphaned %s", r.namespace, orphan)
-    events += _dry_run_events(results, {} if reported is None else reported, config)
+    events += _dry_run_events(results, state.dry_run, config)
     if base is None:
         return events
 
@@ -156,10 +177,15 @@ async def startup(memo: kopf.Memo, **_):
         kube_config.load_kube_config()
     core, custom, name = client.CoreV1Api(), client.CustomObjectsApi(), config_name(os.environ)
 
-    reported = {}
+    # One line per watch event ("Handler 'request_sweep' succeeded") says nothing:
+    # the handler only requests a sweep. --verbose/--debug keep it.
+    if logging.getLogger().getEffectiveLevel() > logging.DEBUG:
+        logging.getLogger("kopf.objects").setLevel(logging.WARNING)
+
+    state = State()
 
     async def run():
-        for e in await asyncio.to_thread(run_once, core, custom, name, reported):
+        for e in await asyncio.to_thread(run_once, core, custom, name, state):
             kopf.event(e.body, type=e.type, reason=e.reason, message=e.message)
 
     memo.sweeper = Sweeper(run, interval.total_seconds())

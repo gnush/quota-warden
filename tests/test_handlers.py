@@ -1,10 +1,11 @@
 import asyncio
+import logging
 
 import pytest
 from kubernetes.client.exceptions import ApiException
 from test_reconcile import FakeCore, namespace, quota
 
-from quota_warden.handlers import Sweeper, run_once
+from quota_warden.handlers import State, Sweeper, run_once
 
 SELECTOR = {"matchLabels": {"managed": "yes"}}
 
@@ -105,16 +106,16 @@ def test_base_is_read_by_base_name():
 def test_dry_run_reports_each_pending_change_once():
     custom = FakeCustom(config(managedNamespaces=SELECTOR, dryRun=True), base(cpu="1"))
     core = FakeCore([namespace("a")])
-    reported = {}
-    events = run_once(core, custom, "default", reported)
+    state = State()
+    events = run_once(core, custom, "default", state)
     assert custom.conditions("quotawardenconfigs", "default")["Ready"][0] == "True"
     dry = [e for e in events if e.body.get("kind") == "Namespace"]
     assert [(e.body["metadata"]["name"], e.type) for e in dry] == [("a", "Normal")]
     assert dry[0].message == "dry run: would apply quota-warden: cpu=1"
     assert core.writes == [] and core.quotas == {}
-    assert run_once(core, custom, "default", reported) == []
+    assert run_once(core, custom, "default", state) == []
     custom.objects["quotabases", "default"]["spec"]["resources"] = {"cpu": "2"}
-    assert [e.message for e in run_once(core, custom, "default", reported)] == [
+    assert [e.message for e in run_once(core, custom, "default", state)] == [
         "dry run: would apply quota-warden: cpu=2"
     ]
 
@@ -136,6 +137,24 @@ def test_dry_run_sets_ready_reason():
     run_once(FakeCore([]), custom, "default")
     ready = custom.objects["quotawardenconfigs", "default"]["status"]["conditions"][0]
     assert (ready["status"], ready["reason"]) == ("True", "DryRun")
+
+
+def test_standing_config_error_logs_once_then_debug(caplog):
+    caplog.set_level(logging.DEBUG, logger="quota_warden")
+    custom = FakeCustom(config())
+    state = State()
+    for _ in range(3):
+        run_once(FakeCore([]), custom, "default", state)
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(errors) == 1 and "managedNamespaces is unset" in errors[0].message
+    assert sum(r.levelno == logging.DEBUG for r in caplog.records) == 2
+
+    caplog.clear()
+    custom.objects["quotawardenconfigs", "default"]["spec"]["managedNamespaces"] = SELECTOR
+    run_once(FakeCore([]), custom, "default", state)
+    infos = [r.message for r in caplog.records if r.levelno == logging.INFO]
+    assert "config 'default' loaded" in infos
+    assert "QuotaBase 'default' not found; removing owned quotas" in infos
 
 
 def drive(script, debounce=0.0, interval=3600.0, fail_on=None):

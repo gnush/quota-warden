@@ -11,6 +11,9 @@ In a pod it uses the service account; elsewhere the current kubeconfig context,
 so check `kubectl config current-context` first. `--standalone`: no peering is
 set up, so run a single replica.
 
+Log level is kopf's: `--quiet` for problems only, `--verbose` for everything,
+including kopf's per-event lines, which are hidden otherwise.
+
 It does nothing until a `QuotaWardenConfig` exists, and touches no namespace
 while that config is missing or invalid.
 
