@@ -28,6 +28,7 @@ class FakeCore:
         self.namespaces = namespaces
         self.quotas = quotas or {}
         self.writes = []
+        self.dry_runs = []
 
     def list_namespace(self):
         return NS(items=self.namespaces)
@@ -39,6 +40,8 @@ class FakeCore:
             raise ApiException(status=404) from None
 
     def patch_namespaced_resource_quota(self, name, namespace, body, **kwargs):
+        dry_run = kwargs.pop("dry_run", None)
+        assert dry_run in (None, "All")
         assert kwargs == {
             "field_manager": FIELD_MANAGER,
             "force": True,
@@ -48,6 +51,9 @@ class FakeCore:
         if "bad" in hard:
             message = json.dumps({"message": 'ResourceQuota "x" is invalid: spec.hard[bad]'})
             raise ApiException(status=422, body=message)
+        if dry_run:
+            self.dry_runs.append(namespace)
+            return
         self.writes.append(("apply", namespace, name))
         self.quotas[namespace, name] = quota(hard, body["metadata"]["labels"])
 
@@ -155,3 +161,33 @@ def test_read_object_absent_is_none():
             raise ApiException(status=404)
 
     assert read_object(Absent(), "quotabases", "default") is None
+
+
+DRY = Config(CONFIG.spec, "quota-warden", "default", True)
+
+
+def test_dry_run_validates_on_the_server_and_stores_nothing():
+    core = FakeCore([namespace("a")])
+    results, _ = sweep(core, base(cpu="1"), DRY)
+    assert (results[0].action, results[0].dry_run) == ("applied", True)
+    assert core.dry_runs == ["a"]
+    assert core.writes == [] and core.quotas == {}
+
+
+def test_dry_run_still_reports_rejection():
+    core = FakeCore([namespace("a")])
+    results, _ = sweep(core, base(bad="1"), DRY)
+    assert (results[0].action, results[0].dry_run) == ("rejected", True)
+
+
+def test_dry_run_does_not_delete():
+    core = FakeCore([namespace("a")], {("a", "quota-warden"): quota({"cpu": "1"})})
+    results, _ = sweep(core, None, DRY)
+    assert (results[0].action, results[0].dry_run) == ("deleted", True)
+    assert core.writes == [] and ("a", "quota-warden") in core.quotas
+
+
+def test_dry_run_unchanged_is_not_flagged():
+    core = FakeCore([namespace("a")], {("a", "quota-warden"): quota({"cpu": "1"})})
+    results, _ = sweep(core, base(cpu="1"), DRY)
+    assert (results[0].action, results[0].dry_run) == ("unchanged", False)

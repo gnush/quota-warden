@@ -102,6 +102,30 @@ def test_base_is_read_by_base_name():
     assert core.quotas == {}
 
 
+def test_dry_run_reports_each_pending_change_once():
+    custom = FakeCustom(config(managedNamespaces=SELECTOR, dryRun=True), base(cpu="1"))
+    core = FakeCore([namespace("a")])
+    reported = {}
+    events = run_once(core, custom, "default", reported)
+    assert custom.conditions("quotawardenconfigs", "default")["Ready"][0] == "True"
+    dry = [e for e in events if e.body.get("kind") == "Namespace"]
+    assert [(e.body["metadata"]["name"], e.type) for e in dry] == [("a", "Normal")]
+    assert dry[0].message == "dry run: would apply quota-warden: cpu=1"
+    assert core.writes == [] and core.quotas == {}
+    assert run_once(core, custom, "default", reported) == []
+    custom.objects["quotabases", "default"]["spec"]["resources"] = {"cpu": "2"}
+    assert [e.message for e in run_once(core, custom, "default", reported)] == [
+        "dry run: would apply quota-warden: cpu=2"
+    ]
+
+
+def test_dry_run_sets_ready_reason():
+    custom = FakeCustom(config(managedNamespaces=SELECTOR, dryRun=True))
+    run_once(FakeCore([]), custom, "default")
+    ready = custom.objects["quotawardenconfigs", "default"]["status"]["conditions"][0]
+    assert (ready["status"], ready["reason"]) == ("True", "DryRun")
+
+
 def drive(script, debounce=0.0, interval=3600.0, fail_on=None):
     """Run `script(sweeper, runs)` against a Sweeper whose sweeps are counted."""
 

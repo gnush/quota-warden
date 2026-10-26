@@ -216,6 +216,35 @@ def test_malformed_selector_sets_the_condition_and_leaves_quotas(api, custom, ba
     assert wait_for(lambda: hard(api) == q(cpu="8")), hard(api)
 
 
+def dry_run_events(api):
+    # events about cluster-scoped objects land in `default`
+    events = api.list_namespaced_event(
+        "default", field_selector=f"involvedObject.name={NAMESPACE},reason=DryRun"
+    ).items
+    return [e.message for e in events]
+
+
+def test_dry_run_reports_on_the_namespace_and_writes_nothing(api, custom, base):
+    label(api, MANAGED_LABEL[LABEL])
+    base(cpu="4")
+    wait_for(lambda: hard(api) == q(cpu="4"))
+
+    def set_dry_run(value):
+        patch = {"spec": {"dryRun": value}}
+        custom.patch_cluster_custom_object(GROUP, VERSION, "quotawardenconfigs", CONFIG, patch)
+
+    set_dry_run(True)
+    try:
+        wait_for(lambda: ready(custom)["reason"] == "DryRun")
+        base(cpu="6")
+        expected = "dry run: would apply quota-warden: cpu=6"
+        assert wait_for(lambda: expected in dry_run_events(api)), dry_run_events(api)
+        assert hard(api) == q(cpu="4")
+    finally:
+        set_dry_run(False)
+    assert wait_for(lambda: hard(api) == q(cpu="6")), hard(api)
+
+
 def test_deleting_the_base_removes_the_quota(api, custom, base):
     label(api, MANAGED_LABEL[LABEL])
     base(cpu="4")

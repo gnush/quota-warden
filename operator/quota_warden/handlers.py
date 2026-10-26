@@ -18,8 +18,12 @@ from .reconcile import GROUP, read_object, sweep
 logger = logging.getLogger(__name__)
 
 
-def run_once(core, custom, name: str) -> list[Event]:
-    """One sweep, conditions included. Blocking; returns the Events to post."""
+def run_once(core, custom, name: str, reported: dict | None = None) -> list[Event]:
+    """One sweep, conditions included. Blocking; returns the Events to post.
+
+    `reported` carries the last dry-run outcome per namespace across sweeps, so a
+    pending change is announced once, not on every sweep.
+    """
     body = read_object(custom, "quotawardenconfigs", name)
     try:
         config = load(body)
@@ -34,15 +38,21 @@ def run_once(core, custom, name: str) -> list[Event]:
             body,
             [Condition("Ready", "False", "ConfigError", str(exc))],
         )
-    events = update(custom, "quotawardenconfigs", body, [Condition("Ready", "True", "Loaded")])
+    ready = (
+        Condition("Ready", "True", "DryRun", "dryRun is set; nothing is written")
+        if config.dry_run
+        else Condition("Ready", "True", "Loaded")
+    )
+    events = update(custom, "quotawardenconfigs", body, [ready])
 
     base = read_object(custom, "quotabases", config.base_name)
     if base is None:
         logger.info("QuotaBase %r not found; removing owned quotas", config.base_name)
     results, issues = sweep(core, base, config)
     for r in results:
-        if r.action in ("applied", "deleted"):
+        if r.action in ("applied", "deleted") and not r.dry_run:
             logger.info("%s: %s %s", r.namespace, r.action, r.hard)
+    events += _dry_run_events(results, {} if reported is None else reported, config)
     if base is None:
         return events
 
@@ -61,6 +71,30 @@ def run_once(core, custom, name: str) -> list[Event]:
             else Condition("Applied", "True", "Applied"),
         ],
     )
+
+
+def _dry_run_events(results, reported: dict, config) -> list[Event]:
+    events = []
+    for r in results:
+        if not r.dry_run:
+            # a change that recurs after being resolved is reported again
+            reported.pop(r.namespace, None)
+            continue
+        outcome = (r.action, tuple(sorted(r.hard.items())), r.error)
+        if reported.get(r.namespace) == outcome:
+            continue
+        reported[r.namespace] = outcome
+        values = ", ".join(f"{k}={v}" for k, v in sorted(r.hard.items()))
+        message = {
+            "applied": f"dry run: would apply {config.resource_quota_name}: {values}",
+            "deleted": f"dry run: would delete {config.resource_quota_name}",
+            "rejected": f"dry run: {config.resource_quota_name} would be rejected: {r.error}",
+        }[r.action]
+        logger.info("%s: %s", r.namespace, message)
+        namespace = {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": r.namespace}}
+        kind = "Warning" if r.action == "rejected" else "Normal"
+        events.append(Event(namespace, kind, "DryRun", message))
+    return events
 
 
 class Sweeper:
@@ -114,8 +148,10 @@ async def startup(memo: kopf.Memo, **_):
         kube_config.load_kube_config()
     core, custom, name = client.CoreV1Api(), client.CustomObjectsApi(), config_name(os.environ)
 
+    reported = {}
+
     async def run():
-        for e in await asyncio.to_thread(run_once, core, custom, name):
+        for e in await asyncio.to_thread(run_once, core, custom, name, reported):
             kopf.event(e.body, type=e.type, reason=e.reason, message=e.message)
 
     memo.sweeper = Sweeper(run, interval.total_seconds())
