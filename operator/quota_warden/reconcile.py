@@ -1,7 +1,7 @@
 """One sweep over all namespaces, without kopf."""
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from kubernetes.client.exceptions import ApiException
@@ -26,7 +26,9 @@ class Result:
     action: Literal["applied", "deleted", "unchanged", "skipped", "rejected"]
     hard: dict[str, str] = field(default_factory=dict)
     error: str = ""
-    # applied/deleted/rejected describe what a real run would do; nothing was stored
+    # labeled quotas under another name, e.g. left behind by a resourceQuotaName change
+    orphans: tuple[str, ...] = ()
+    # action and orphans describe what a real run would do; nothing was stored
     dry_run: bool = False
 
 
@@ -58,7 +60,23 @@ def reconcile_namespace(core, namespace, config: Config, hard: dict[str, str]) -
     if not is_managed(namespace.metadata.labels or {}, name, config.spec):
         return Result(name, "skipped")
 
-    existing = _read(core, name, config.resource_quota_name)
+    quotas = core.list_namespaced_resource_quota(name).items
+    existing = next((q for q in quotas if q.metadata.name == config.resource_quota_name), None)
+    orphans = tuple(
+        q.metadata.name
+        for q in quotas
+        if q.metadata.name != config.resource_quota_name and _owned(q)
+    )
+    if not config.dry_run:
+        for orphan in orphans:
+            _delete(core, name, orphan)
+    result = _reconcile_owned(core, name, existing, config, hard)
+    if not orphans:
+        return result
+    return replace(result, orphans=orphans, dry_run=result.dry_run or config.dry_run)
+
+
+def _reconcile_owned(core, name: str, existing, config: Config, hard: dict[str, str]) -> Result:
     owned = existing is not None and _owned(existing)
 
     if not hard:
@@ -66,11 +84,7 @@ def reconcile_namespace(core, namespace, config: Config, hard: dict[str, str]) -
             return Result(name, "unchanged")
         if config.dry_run:
             return Result(name, "deleted", dry_run=True)
-        try:
-            core.delete_namespaced_resource_quota(config.resource_quota_name, name)
-        except ApiException as exc:
-            if exc.status != 404:
-                raise
+        _delete(core, name, config.resource_quota_name)
         return Result(name, "deleted")
 
     # Compares the whole key set: a key someone else added makes every sweep
@@ -82,18 +96,17 @@ def reconcile_namespace(core, namespace, config: Config, hard: dict[str, str]) -
         _apply(core, name, config.resource_quota_name, hard, config.dry_run)
     except ApiException as exc:
         if exc.status == 422:
-            return Result(name, "rejected", hard, _message(exc), config.dry_run)
+            return Result(name, "rejected", hard, _message(exc), dry_run=config.dry_run)
         raise
     return Result(name, "applied", hard, dry_run=config.dry_run)
 
 
-def _read(core, namespace: str, name: str):
+def _delete(core, namespace: str, name: str) -> None:
     try:
-        return core.read_namespaced_resource_quota(name, namespace)
+        core.delete_namespaced_resource_quota(name, namespace)
     except ApiException as exc:
-        if exc.status == 404:
-            return None
-        raise
+        if exc.status != 404:
+            raise
 
 
 def _owned(quota) -> bool:

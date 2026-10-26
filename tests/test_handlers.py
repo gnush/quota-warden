@@ -119,6 +119,18 @@ def test_dry_run_reports_each_pending_change_once():
     ]
 
 
+def test_dry_run_event_names_orphans():
+    custom = FakeCustom(config(managedNamespaces=SELECTOR, dryRun=True), base(cpu="1"))
+    core = FakeCore(
+        [namespace("a")],
+        {("a", "quota-warden"): quota({"cpu": "1"}), ("a", "old"): quota({"cpu": "1"})},
+    )
+    events = run_once(core, custom, "default")
+    assert [e.message for e in events if e.body.get("kind") == "Namespace"] == [
+        "dry run: would delete orphaned old"
+    ]
+
+
 def test_dry_run_sets_ready_reason():
     custom = FakeCustom(config(managedNamespaces=SELECTOR, dryRun=True))
     run_once(FakeCore([]), custom, "default")

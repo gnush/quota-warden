@@ -33,11 +33,13 @@ class FakeCore:
     def list_namespace(self):
         return NS(items=self.namespaces)
 
-    def read_namespaced_resource_quota(self, name, namespace):
-        try:
-            return self.quotas[namespace, name]
-        except KeyError:
-            raise ApiException(status=404) from None
+    def list_namespaced_resource_quota(self, namespace):
+        items = []
+        for (ns, name), q in self.quotas.items():
+            if ns == namespace:
+                q.metadata.name = name
+                items.append(q)
+        return NS(items=items)
 
     def patch_namespaced_resource_quota(self, name, namespace, body, **kwargs):
         dry_run = kwargs.pop("dry_run", None)
@@ -141,7 +143,7 @@ def test_rejected_write_keeps_the_last_quota_and_carries_the_message():
 
 def test_other_api_errors_propagate():
     core = FakeCore([namespace("a")])
-    core.read_namespaced_resource_quota = lambda *_: (_ for _ in ()).throw(ApiException(500))
+    core.list_namespaced_resource_quota = lambda *_: (_ for _ in ()).throw(ApiException(500))
     with pytest.raises(ApiException):
         run(core, base(cpu="1"))
 
@@ -191,3 +193,36 @@ def test_dry_run_unchanged_is_not_flagged():
     core = FakeCore([namespace("a")], {("a", "quota-warden"): quota({"cpu": "1"})})
     results, _ = sweep(core, base(cpu="1"), DRY)
     assert (results[0].action, results[0].dry_run) == ("unchanged", False)
+
+
+def test_labeled_quota_under_another_name_is_deleted():
+    core = FakeCore(
+        [namespace("a")],
+        {
+            ("a", "old-name"): quota({"cpu": "1"}),
+            ("a", "foreign"): quota({"cpu": "1"}, labels={}),
+        },
+    )
+    results, _ = run(core, base(cpu="1"))
+    assert results["a"].orphans == ("old-name",)
+    assert set(core.quotas) == {("a", "foreign"), ("a", "quota-warden")}
+
+
+def test_orphans_in_unmanaged_namespaces_are_left():
+    core = FakeCore([namespace("b", managed=False)], {("b", "old-name"): quota({"cpu": "1"})})
+    run(core, base(cpu="1"))
+    assert core.writes == []
+
+
+def test_dry_run_reports_orphans_without_deleting():
+    core = FakeCore(
+        [namespace("a")],
+        {("a", "quota-warden"): quota({"cpu": "1"}), ("a", "old-name"): quota({"cpu": "1"})},
+    )
+    results, _ = sweep(core, base(cpu="1"), DRY)
+    assert (results[0].action, results[0].orphans, results[0].dry_run) == (
+        "unchanged",
+        ("old-name",),
+        True,
+    )
+    assert core.writes == []

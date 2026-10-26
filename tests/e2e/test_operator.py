@@ -245,6 +245,26 @@ def test_dry_run_reports_on_the_namespace_and_writes_nothing(api, custom, base):
     assert wait_for(lambda: hard(api) == q(cpu="6")), hard(api)
 
 
+def test_renaming_the_quota_removes_the_old_one(api, custom, base):
+    label(api, MANAGED_LABEL[LABEL])
+    base(cpu="4")
+    wait_for(lambda: hard(api))
+
+    def names():
+        return {q.metadata.name for q in api.list_namespaced_resource_quota(NAMESPACE).items}
+
+    def rename(value):
+        patch = {"spec": {"resourceQuotaName": value}}
+        custom.patch_cluster_custom_object(GROUP, VERSION, "quotawardenconfigs", CONFIG, patch)
+
+    rename("e2e-renamed")
+    try:
+        assert wait_for(lambda: names() == {"e2e-renamed"}), names()
+    finally:
+        rename(QUOTA)
+    assert wait_for(lambda: names() == {QUOTA}), names()
+
+
 def test_deleting_the_base_removes_the_quota(api, custom, base):
     label(api, MANAGED_LABEL[LABEL])
     base(cpu="4")
