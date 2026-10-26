@@ -46,6 +46,9 @@ class Result:
     # unlabeled quotas left in place: reported, or under dryRun would be deleted
     foreign: tuple[str, ...] = ()
     foreign_deleted: tuple[str, ...] = ()
+    # owned quotas in a namespace no longer managed: deleted (under dryRun: would be), or kept
+    released: tuple[str, ...] = ()
+    retained: tuple[str, ...] = ()
 
 
 def read_object(custom, plural: str, name: str) -> dict | None:
@@ -80,6 +83,12 @@ def sweep(
     results = []
     # dict, not list: the base is parsed once per namespace and would repeat its issues
     issues: dict[Issue, None] = dict.fromkeys(merge(base or {}, None, [])[1])
+    # one call instead of one per unmanaged namespace, of which there may be hundreds
+    key, value = MANAGED_BY
+    labelled = core.list_resource_quota_for_all_namespaces(label_selector=f"{key}={value}")
+    owned: dict[str, list[str]] = {}
+    for quota in labelled.items:
+        owned.setdefault(quota.metadata.namespace, []).append(quota.metadata.name)
     for namespace in core.list_namespace().items:
         ns_override = by_override.get(namespace.metadata.name)
         ns_extensions = by_extensions.get(namespace.metadata.name, [])
@@ -88,7 +97,9 @@ def sweep(
         sources = provenance(base or {}, ns_override, ns_extensions)
         # fixed serialisation: an unchanged sweep must compare equal and write nothing
         annotation = json.dumps(sources, sort_keys=True, separators=(",", ":"))
-        result = reconcile_namespace(core, namespace, config, hard, annotation)
+        result = reconcile_namespace(
+            core, namespace, config, hard, annotation, tuple(owned.get(namespace.metadata.name, ()))
+        )
         if result.action in ("rejected", "blocked"):
             # a blocked result has no error naming a key, so every contributor is blamed
             blame = _blame(result.error, base, ns_override, ns_extensions)
@@ -161,7 +172,12 @@ def _blame(
 
 
 def reconcile_namespace(
-    core, namespace, config: Config, hard: dict[str, str], annotation: str = "{}"
+    core,
+    namespace,
+    config: Config,
+    hard: dict[str, str],
+    annotation: str = "{}",
+    owned: tuple[str, ...] = (),
 ) -> Result:
     name = namespace.metadata.name
     # a terminating namespace refuses writes; its quota goes with it
@@ -169,7 +185,7 @@ def reconcile_namespace(
         return Result(name, "skipped", reason="Terminating")
     if not is_managed(namespace.metadata.labels or {}, name, config.spec):
         reason = "Protected" if is_protected(name, config.spec) else "Unmanaged"
-        return Result(name, "skipped", reason=reason)
+        return _unmanage(core, Result(name, "skipped", reason=reason), config, owned)
 
     quotas = core.list_namespaced_resource_quota(name).items
     existing = next((q for q in quotas if q.metadata.name == config.resource_quota_name), None)
@@ -205,6 +221,18 @@ def reconcile_namespace(
     if orphans or (deleting and foreign):
         result = replace(result, orphans=orphans, dry_run=result.dry_run or config.dry_run)
     return result
+
+
+def _unmanage(core, result: Result, config: Config, owned: tuple[str, ...]) -> Result:
+    """Owned quotas left in a namespace that stopped matching; the sources stay untouched."""
+    if not owned:
+        return result
+    if config.on_unmanage == "retain":
+        return replace(result, retained=owned)
+    if not config.dry_run:
+        for quota in owned:
+            _delete(core, result.namespace, quota)
+    return replace(result, released=owned, dry_run=config.dry_run)
 
 
 def _reconcile_owned(

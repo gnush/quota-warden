@@ -642,3 +642,47 @@ def test_quota_events_count_only_what_a_sweep_reads():
     assert quota_changed(seen, "DELETED", rq_body(hard="3", labels={"x": "y"}))
     assert seen == {}
     assert quota_changed(seen, "ADDED", rq_body(uid="v"))
+
+
+def test_unmanage_deletes_with_a_warning_and_keeps_the_sources():
+    core = FakeCore([namespace("a", managed=False)], {("a", "quota-warden"): quota({"cpu": "2"})})
+    custom = FakeCustom(
+        config(managedNamespaces=SELECTOR), base(cpu="1"), override("a", "a", cpu="2")
+    )
+    events = run_once(core, custom, "default")
+    assert namespace_events(events, "Unmanaged") == [
+        (
+            "a",
+            "Warning",
+            "namespace no longer managed (Unmanaged): deleted ResourceQuota quota-warden; "
+            "its overrides and extensions are kept",
+        )
+    ]
+    assert core.quotas == {}
+    assert ("quotaoverrides", "a") in custom.objects
+    assert namespace_events(run_once(core, custom, "default"), "Unmanaged") == []
+
+
+def test_unmanage_retain_warns_once():
+    core = FakeCore([namespace("a", managed=False)], {("a", "quota-warden"): quota({"cpu": "2"})})
+    custom = FakeCustom(config(managedNamespaces=SELECTOR, onUnmanage="retain"), base(cpu="1"))
+    state = State()
+    [(_, kind, message)] = namespace_events(run_once(core, custom, "default", state), "Unmanaged")
+    assert kind == "Warning" and message.endswith("quota-warden retained and still binds")
+    assert namespace_events(run_once(core, custom, "default", state), "Unmanaged") == []
+    assert ("a", "quota-warden") in core.quotas
+
+
+def test_unmanage_under_dry_run_is_reported_not_done():
+    core = FakeCore([namespace("a", managed=False)], {("a", "quota-warden"): quota({"cpu": "2"})})
+    custom = FakeCustom(config(managedNamespaces=SELECTOR, dryRun=True), base(cpu="1"))
+    events = run_once(core, custom, "default")
+    assert namespace_events(events, "Unmanaged") == []
+    assert namespace_events(events, "DryRun") == [
+        (
+            "a",
+            "Normal",
+            "dry run: would delete quota-warden: namespace no longer managed (Unmanaged)",
+        )
+    ]
+    assert ("a", "quota-warden") in core.quotas

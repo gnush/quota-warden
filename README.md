@@ -55,6 +55,11 @@ A foreign quota named `resourceQuotaName` blocks the namespace outside `delete`:
 nothing is written there, and its sources get `Applied=False` (`Blocked`).
 Edits to any ResourceQuota trigger a sweep, so a hand edit is reverted within seconds.
 
+A namespace that stops being managed (label removed, selector narrowed, or added to
+`protectedNamespaces`) loses its quota under `onUnmanage: delete` (default), or keeps
+it frozen under `retain`. Either way a Warning Event goes on the Namespace. Overrides
+and extensions are kept, so managing the namespace again restores the quota.
+
 The quota's `quota-warden.gnush.github.io/provenance` annotation maps each key to
 the sources that set it. Every write and delete is an Event on the quota
 (`kubectl describe resourcequota quota-warden -n <ns>`) naming the keys that changed.

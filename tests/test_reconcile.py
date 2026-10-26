@@ -46,6 +46,16 @@ class FakeCore:
                 items.append(q)
         return NS(items=items)
 
+    def list_resource_quota_for_all_namespaces(self, label_selector):
+        key, value = MANAGED_BY
+        assert label_selector == f"{key}={value}"
+        items = []
+        for (ns, name), q in self.quotas.items():
+            if (q.metadata.labels or {}).get(key) == value:
+                q.metadata.name, q.metadata.namespace = name, ns
+                items.append(q)
+        return NS(items=items)
+
     def patch_namespaced_resource_quota(self, name, namespace, body, **kwargs):
         dry_run = kwargs.pop("dry_run", None)
         assert dry_run in (None, "All")
@@ -275,9 +285,43 @@ def test_labeled_quota_under_another_name_is_deleted():
     assert set(core.quotas) == {("a", "foreign"), ("a", "quota-warden")}
 
 
-def test_orphans_in_unmanaged_namespaces_are_left():
-    core = FakeCore([namespace("b", managed=False)], {("b", "old-name"): quota({"cpu": "1"})})
-    run(core, base(cpu="1"))
+def unmanaged_quotas():
+    return {
+        ("b", "quota-warden"): quota({"cpu": "1"}),
+        ("b", "old-name"): quota({"cpu": "1"}),
+        ("b", "legacy"): quota({"cpu": "1"}, labels={}),
+    }
+
+
+@pytest.mark.parametrize("ns", [namespace("b", managed=False), namespace("b")])
+def test_unmanage_deletes_owned_quotas_only(ns):
+    # managed=True with b protected: protection unmanages just the same
+    config = dataclasses.replace(CONFIG, spec={**CONFIG.spec, "protectedNamespaces": ["b"]})
+    core = FakeCore([ns], unmanaged_quotas())
+    [result], _ = sweep(core, base(cpu="1"), [], [], config, NOW)
+    assert (result.action, result.released) == ("skipped", ("quota-warden", "old-name"))
+    assert core.quotas.keys() == {("b", "legacy")}
+
+
+def test_unmanage_retain_keeps_the_quota():
+    config = dataclasses.replace(CONFIG, on_unmanage="retain")
+    core = FakeCore([namespace("b", managed=False)], unmanaged_quotas())
+    [result], _ = sweep(core, base(cpu="1"), [], [], config, NOW)
+    assert (result.retained, result.released) == (("quota-warden", "old-name"), ())
+    assert core.writes == []
+
+
+def test_unmanage_under_dry_run_deletes_nothing():
+    core = FakeCore([namespace("b", managed=False)], unmanaged_quotas())
+    [result], _ = sweep(core, base(cpu="1"), [], [], DRY, NOW)
+    assert (result.released, result.dry_run) == (("quota-warden", "old-name"), True)
+    assert core.writes == []
+
+
+def test_a_terminating_namespace_is_not_unmanaged():
+    core = FakeCore([namespace("b", managed=False, phase="Terminating")], unmanaged_quotas())
+    [result], _ = sweep(core, base(cpu="1"), [], [], CONFIG, NOW)
+    assert (result.reason, result.released) == ("Terminating", ())
     assert core.writes == []
 
 

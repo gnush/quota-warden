@@ -32,6 +32,7 @@ class State:
     logged: dict[str, str] = field(default_factory=dict)  # topic -> last message
     would_reap: set[str] = field(default_factory=set)  # extensions reported under dryRun
     foreign: set[tuple[str, str]] = field(default_factory=set)  # (namespace, name) reported
+    retained: set[tuple[str, str]] = field(default_factory=set)  # (namespace, name) reported
 
     def log(self, topic: str, level: int, message: str) -> None:
         if self.logged.get(topic) == message:
@@ -94,6 +95,7 @@ def run_once(
             logger.info("%s: deleted orphaned %s", r.namespace, orphan)
     events += _write_events(results, config)
     events += _foreign_events(results, state.foreign, config)
+    events += _unmanage_events(results, state.retained)
     events += _dry_run_events(results, state.dry_run, config)
     if base is not None:
         events += update(
@@ -242,6 +244,32 @@ def _foreign_events(results, reported: set, config) -> list[Event]:
     return events
 
 
+def _unmanage_events(results, reported: set) -> list[Event]:
+    """Warning on the Namespace: losing management unquotas it, or freezes its quota."""
+    events = []
+    present = set()
+    for r in results:
+        namespace = {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": r.namespace}}
+        cause = f"namespace no longer managed ({r.reason})"
+        # under dryRun the dry-run Event reports it
+        if r.released and not r.dry_run:
+            message = (
+                f"{cause}: deleted ResourceQuota {', '.join(r.released)}; "
+                "its overrides and extensions are kept"
+            )
+            logger.warning("%s: %s", r.namespace, message)
+            events.append(Event(namespace, "Warning", "Unmanaged", message))
+        new = [q for q in r.retained if (r.namespace, q) not in reported]
+        present |= {(r.namespace, q) for q in r.retained}
+        if new:
+            message = f"{cause}: ResourceQuota {', '.join(new)} retained and still binds"
+            logger.warning("%s: %s", r.namespace, message)
+            events.append(Event(namespace, "Warning", "Unmanaged", message))
+    reported.clear()
+    reported.update(present)
+    return events
+
+
 def _write_events(results, config) -> list[Event]:
     """On the quota itself, so the namespace owner sees them without cluster-wide rights."""
     events = []
@@ -290,7 +318,14 @@ def _dry_run_events(results, reported: dict, config) -> list[Event]:
             # a change that recurs after being resolved is reported again
             reported.pop(r.namespace, None)
             continue
-        outcome = (r.action, tuple(sorted(r.hard.items())), r.error, r.orphans, r.foreign)
+        outcome = (
+            r.action,
+            tuple(sorted(r.hard.items())),
+            r.error,
+            r.orphans,
+            r.foreign,
+            r.released,
+        )
         if reported.get(r.namespace) == outcome:
             continue
         reported[r.namespace] = outcome
@@ -305,6 +340,10 @@ def _dry_run_events(results, reported: dict, config) -> list[Event]:
             parts.append(f"would delete orphaned {', '.join(r.orphans)}")
         if r.foreign and config.foreign_resource_quotas == "delete":
             parts.append(f"would delete foreign {', '.join(r.foreign)}")
+        if r.released:
+            parts.append(
+                f"would delete {', '.join(r.released)}: namespace no longer managed ({r.reason})"
+            )
         message = "dry run: " + "; ".join(parts)
         logger.info("%s: %s", r.namespace, message)
         namespace = {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": r.namespace}}

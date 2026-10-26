@@ -541,5 +541,55 @@ def test_delete_mode_removes_the_foreign_quota(api, custom, base, foreign):
         set_mode("report")
 
 
+def unmanaged_events(api, before=frozenset()):
+    """Messages of Unmanaged Events not in `before`, a set of uids: Events outlive a run."""
+    events = api.list_namespaced_event(
+        "default", field_selector=f"involvedObject.name={NAMESPACE},reason=Unmanaged"
+    ).items
+    return {e.metadata.uid: e.message for e in events if e.metadata.uid not in before}
+
+
+def test_unlabelling_deletes_the_quota_and_relabelling_restores_it(api, base, override):
+    label(api, MANAGED_LABEL[LABEL])
+    base(cpu="2")
+    override(NAMESPACE, cpu="5")
+    assert wait_for(lambda: hard(api) == q(cpu="5")), hard(api)
+    before = unmanaged_events(api).keys()
+    label(api, None)
+    assert wait_for(lambda: hard(api) is None), hard(api)
+
+    def new():
+        return unmanaged_events(api, before).values()
+
+    assert wait_for(lambda: any("deleted ResourceQuota" in m for m in new())), list(new())
+    label(api, MANAGED_LABEL[LABEL])
+    assert wait_for(lambda: hard(api) == q(cpu="5")), hard(api)
+
+
+def test_retain_keeps_the_quota_and_warns(api, custom, base):
+    label(api, MANAGED_LABEL[LABEL])
+    base(cpu="2")
+    wait_for(lambda: hard(api) == q(cpu="2"))
+
+    def set_mode(value):
+        patch = {"spec": {"onUnmanage": value}}
+        custom.patch_cluster_custom_object(GROUP, VERSION, "quotawardenconfigs", CONFIG, patch)
+
+    set_mode("retain")
+    try:
+        before = unmanaged_events(api).keys()
+        label(api, None)
+
+        def new():
+            return unmanaged_events(api, before).values()
+
+        assert wait_for(lambda: any("retained" in m for m in new())), list(new())
+        assert hard(api) == q(cpu="2")
+    finally:
+        set_mode("delete")
+    # the mode change is a watch event; the next sweep deletes the frozen quota
+    assert wait_for(lambda: hard(api) is None), hard(api)
+
+
 def test_operator_is_still_running(operator):
     assert operator.poll() is None
