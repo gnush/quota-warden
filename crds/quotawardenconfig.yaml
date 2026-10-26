@@ -58,6 +58,16 @@ spec:
                 dryRun:
                   type: boolean
                   default: false
+                # quotas without the managed-by label, including one named resourceQuotaName
+                foreignResourceQuotas:
+                  type: string
+                  enum: [report, delete, ignore]
+                  default: report
+                # deletes only the owned quota; the sources stay, so relabelling restores it
+                onUnmanage:
+                  type: string
+                  enum: [delete, retain]
+                  default: delete
             status:
               type: object
               x-kubernetes-preserve-unknown-fields: true

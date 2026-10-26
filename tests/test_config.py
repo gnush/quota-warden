@@ -5,7 +5,13 @@ import pytest
 from quota_warden.config import ConfigError, config_name, load, resync_interval
 
 # as stored: the CRD fills the defaults
-DEFAULTS = {"resourceQuotaName": "quota-warden", "baseName": "default", "dryRun": False}
+DEFAULTS = {
+    "resourceQuotaName": "quota-warden",
+    "baseName": "default",
+    "dryRun": False,
+    "foreignResourceQuotas": "report",
+    "onUnmanage": "delete",
+}
 
 
 def body(**spec):
@@ -20,6 +26,11 @@ def test_load():
         True,
     )
     assert config.spec["managedNamespaces"] == {}
+
+
+def test_load_reads_the_sole_authority_settings():
+    config = load(body(managedNamespaces={}, foreignResourceQuotas="delete", onUnmanage="retain"))
+    assert (config.foreign_resource_quotas, config.on_unmanage) == ("delete", "retain")
 
 
 def test_missing_config_is_an_error():
@@ -47,7 +58,8 @@ def test_malformed_selector_is_an_error_carrying_the_reason(expression):
 
 def test_field_the_crd_should_default_is_an_error():
     with pytest.raises(ConfigError, match="baseName missing"):
-        load({"spec": {"managedNamespaces": {}, "resourceQuotaName": "q", "dryRun": False}})
+        spec = {k: v for k, v in DEFAULTS.items() if k != "baseName"}
+        load({"spec": {**spec, "managedNamespaces": {}}})
 
 
 def test_config_name():

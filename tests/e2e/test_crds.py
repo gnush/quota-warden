@@ -35,7 +35,20 @@ def create(custom):
 
 def test_config_defaults_are_stored(create):
     spec = create("quotawardenconfigs", "e2e-defaults", {})["spec"]
-    assert spec == {"resourceQuotaName": "quota-warden", "baseName": "default", "dryRun": False}
+    assert spec == {
+        "resourceQuotaName": "quota-warden",
+        "baseName": "default",
+        "dryRun": False,
+        "foreignResourceQuotas": "report",
+        "onUnmanage": "delete",
+    }
+
+
+@pytest.mark.parametrize("field", ["foreignResourceQuotas", "onUnmanage"])
+def test_config_rejects_an_unknown_mode(create, field):
+    with pytest.raises(ApiException) as exc:
+        create("quotawardenconfigs", "e2e-bad-mode", {field: "bogus"})
+    assert exc.value.status == 422
 
 
 def test_empty_selector_is_kept_distinct_from_unset(create):

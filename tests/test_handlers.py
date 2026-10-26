@@ -48,7 +48,13 @@ class FakeCustom:
 
 
 def config(**spec):
-    defaults = {"resourceQuotaName": "quota-warden", "baseName": "default", "dryRun": False}
+    defaults = {
+        "resourceQuotaName": "quota-warden",
+        "baseName": "default",
+        "dryRun": False,
+        "foreignResourceQuotas": "report",
+        "onUnmanage": "delete",
+    }
     return {
         "plural": "quotawardenconfigs",
         "metadata": {"name": "default"},

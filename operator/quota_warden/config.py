@@ -3,6 +3,7 @@
 import re
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Literal
 
 from .targeting import SelectorError, validate_selector
 
@@ -23,6 +24,8 @@ class Config:
     resource_quota_name: str
     base_name: str
     dry_run: bool
+    foreign_resource_quotas: Literal["report", "delete", "ignore"]
+    on_unmanage: Literal["delete", "retain"]
 
 
 def load(body: dict | None) -> Config:
@@ -40,7 +43,14 @@ def load(body: dict | None) -> Config:
         raise ConfigError(f"managedNamespaces: {exc}") from exc
     # defaulted by the CRD, so absence means the CRD is not the one this build expects
     try:
-        return Config(spec, spec["resourceQuotaName"], spec["baseName"], spec["dryRun"])
+        return Config(
+            spec,
+            spec["resourceQuotaName"],
+            spec["baseName"],
+            spec["dryRun"],
+            spec["foreignResourceQuotas"],
+            spec["onUnmanage"],
+        )
     except KeyError as exc:
         raise ConfigError(f"{exc.args[0]} missing; is the CRD up to date?") from None
 
