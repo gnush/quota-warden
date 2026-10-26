@@ -1,4 +1,4 @@
-"""QuotaWardenConfig and environment settings. See SPEC.md, QuotaWardenConfig."""
+"""QuotaWardenConfig and environment settings."""
 
 import re
 from dataclasses import dataclass

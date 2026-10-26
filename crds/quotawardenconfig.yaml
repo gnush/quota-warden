@@ -24,7 +24,7 @@ spec:
               properties:
                 # No default: unset manages nothing, {} manages everything.
                 # Operators and values are not validated here: a malformed
-                # selector is stored and surfaces as a condition (SPEC, Stage 3).
+                # selector is stored and surfaces as a condition on this object.
                 managedNamespaces:
                   type: object
                   properties:

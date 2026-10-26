@@ -1,4 +1,4 @@
-"""The merge of base, overrides and extensions. See SPEC.md, Merge algorithm."""
+"""The merge of base, overrides and extensions."""
 
 import re
 from dataclasses import dataclass

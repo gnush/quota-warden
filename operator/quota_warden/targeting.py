@@ -1,4 +1,4 @@
-"""Which namespaces are managed. See SPEC.md, Targeting."""
+"""Which namespaces are managed."""
 
 # Added to protectedNamespaces in code, so a user-set list cannot drop them.
 ALWAYS_PROTECTED = frozenset({"kube-system", "kube-public", "kube-node-lease"})

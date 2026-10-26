@@ -1,4 +1,4 @@
-"""Stage 3: the schema contract the operator reads against."""
+"""The CRD schema contract the operator reads against."""
 
 import pytest
 

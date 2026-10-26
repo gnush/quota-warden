@@ -1,4 +1,4 @@
-"""Kubernetes quantities as exact Decimals. See SPEC.md, Quantity arithmetic."""
+"""Kubernetes quantities as exact Decimals."""
 
 import re
 from decimal import Decimal

@@ -1,8 +1,8 @@
-"""Stage 0 gate: the environment every later stage is tested against.
+"""The environment the operator suite is tested against.
 
 Not a test of the operator. The namespace cases use real objects because a mocked
 label dict passes while the real selector path is broken. The quantity cases
-record observed API-server behaviour that later stages depend on.
+record observed API-server behaviour the operator depends on.
 """
 
 from decimal import Decimal
@@ -27,7 +27,7 @@ def test_unmanaged_namespace_has_no_selector_label(api):
 
 
 def test_protected_namespace_is_labeled_like_a_managed_one(api):
-    # Must match the selector AND be in protectedNamespaces, so stage 2 has a
+    # Must match the selector AND be in protectedNamespaces, so targeting has a
     # real case where protection has to win.
     assert _labels(api, "quota-protected").get(LABEL) == MANAGED_LABEL[LABEL]
 
@@ -51,11 +51,11 @@ def _roundtrip(api, name, key, value):
         api.delete_namespaced_resource_quota(name, "quota-user-a")
 
 
-# --- properties every later stage depends on -------------------------------
+# --- properties the operator depends on ------------------------------------
 
 
 def test_quantity_survives_the_round_trip_by_value(api):
-    # Stages 1-5 write quantities; this is the contract that what they write is
+    # The operator writes quantities; this is the contract that what they write is
     # what the cluster holds.
     for i, (key, value) in enumerate(
         [
@@ -75,7 +75,7 @@ def test_quantity_survives_the_round_trip_by_value(api):
 
 
 def test_api_server_canonicalises_the_display_form(api):
-    # Same value, different text. Stage 6 comparing written-vs-read strings would
+    # Same value, different text. Comparing written-vs-read strings would
     # report drift on every reconcile, so it must compare parsed Decimals.
     assert _roundtrip(api, "canon-gi", "cpu", "1024Gi")[0] == "1Ti"
     assert _roundtrip(api, "canon-frac", "cpu", "1.5")[0] == "1500m"

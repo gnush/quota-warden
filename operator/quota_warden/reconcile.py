@@ -1,4 +1,4 @@
-"""One sweep over all namespaces, without kopf. See SPEC.md, Reconcile."""
+"""One sweep over all namespaces, without kopf."""
 
 import json
 from dataclasses import dataclass, field
@@ -70,7 +70,7 @@ def reconcile_namespace(core, namespace, config: Config, hard: dict[str, str]) -
         return Result(name, "deleted")
 
     # Compares the whole key set: a key someone else added makes every sweep
-    # re-apply, harmlessly, until stage 6 removes foreign keys (TODO.md).
+    # re-apply, harmlessly; foreign keys are not removed yet.
     if owned and _same(existing.spec.hard or {}, hard):
         return Result(name, "unchanged", hard)
 

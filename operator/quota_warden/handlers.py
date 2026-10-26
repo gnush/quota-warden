@@ -1,4 +1,4 @@
-"""kopf wiring: every watch event requests one coalesced sweep. See SPEC.md, Reconcile.
+"""kopf wiring: every watch event requests one coalesced sweep.
 
 Run: `kopf run --all-namespaces -m quota_warden.handlers`.
 """
