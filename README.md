@@ -20,7 +20,26 @@ while that config is missing or invalid.
 | Env var | Default | |
 |---|---|---|
 | `QUOTA_WARDEN_CONFIG` | `default` | name of the `QuotaWardenConfig` to read |
-| `QUOTA_WARDEN_RESYNC_INTERVAL` | `1h` | full sweep without a triggering event; `<n>s`, `<n>m` or `<n>h`; read at startup |
+| `QUOTA_WARDEN_RESYNC_INTERVAL` | `1h` | full sweep without a triggering event; `<n>s`, `<n>m` or `<n>h`; read at startup. An expiry takes effect at most this late. |
+
+## Sources
+
+One ResourceQuota per managed namespace, merged from three cluster-scoped kinds.
+Examples: `cluster/fixtures/quota-{base,override,extension}.yaml`.
+
+| Kind | Applies to | Per key |
+|---|---|---|
+| `QuotaBase` | every managed namespace; the one named by `baseName` | the default |
+| `QuotaOverride` | `spec.namespace` | replaces the base; several on one key: the max, with a `Duplicate` condition |
+| `QuotaExtension` | `spec.namespace`, through `expirationDate` (UTC) | added on top of base or override |
+
+A key no source sets is absent from the quota; an empty merge removes the quota.
+A source aimed at an unmanaged, protected or missing namespace is inert
+(`Targeted=False`). An invalid or negative value drops that key only
+(`Valid=False`).
+
+Expired `QuotaExtension`s are deleted by the operator, whatever namespace they
+target; under `dryRun` they are only reported.
 
 ## Tests
 

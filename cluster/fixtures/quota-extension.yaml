@@ -5,6 +5,6 @@ metadata:
   name: quota-user-a-cpu-boost
 spec:
   namespace: quota-user-a
-  expirationDate: "2026-11-08"
+  expirationDate: "2099-12-31"
   resources:
     cpu: "8"
