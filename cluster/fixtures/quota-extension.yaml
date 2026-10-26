@@ -1,0 +1,10 @@
+---
+apiVersion: quota-warden.gnush.github.io/v1alpha1
+kind: QuotaExtension
+metadata:
+  name: quota-user-a-cpu-boost
+spec:
+  namespace: quota-user-a
+  expirationDate: "2026-11-08"
+  resources:
+    cpu: "8"

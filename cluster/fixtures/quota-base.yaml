@@ -1,0 +1,11 @@
+---
+# Cluster-scoped singleton.
+apiVersion: quota-warden.gnush.github.io/v1alpha1
+kind: QuotaBase
+metadata:
+  name: default
+spec:
+  resources:
+    cpu: "18"
+    memory: 130Gi
+    requests.storage: 300Gi
