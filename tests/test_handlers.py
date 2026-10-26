@@ -149,10 +149,34 @@ def test_override_without_a_base_gets_conditions():
     assert custom.conditions("quotaoverrides", "o")["Applied"] == ("True", "")
 
 
-def test_override_on_an_unreconciled_namespace_claims_no_write():
+@pytest.mark.parametrize(
+    "namespaces, target, reason",
+    [
+        ([namespace("a", managed=False)], "a", "Unmanaged"),
+        ([namespace("kube-system")], "kube-system", "Protected"),
+        ([], "a", "NamespaceNotFound"),
+    ],
+)
+def test_override_on_an_untargeted_namespace_is_inert(namespaces, target, reason):
+    custom = FakeCustom(config(managedNamespaces=SELECTOR), override("o", target, cpu="1"))
+    core = FakeCore(namespaces)
+    events = run_once(core, custom, "default")
+    conditions = custom.conditions("quotaoverrides", "o")
+    assert conditions["Targeted"][0] == "False" and reason in conditions["Targeted"][1]
+    assert conditions["Applied"][0] == "False"
+    assert core.writes == []
+    assert ("Warning", reason) in [(e.type, e.reason) for e in events]
+
+
+def test_targeted_clears_once_the_namespace_is_managed():
     custom = FakeCustom(config(managedNamespaces=SELECTOR), override("o", "a", cpu="1"))
-    run_once(FakeCore([namespace("a", managed=False)]), custom, "default")
-    assert "Applied" not in custom.conditions("quotaoverrides", "o")
+    core = FakeCore([])
+    run_once(core, custom, "default")
+    core.namespaces.append(namespace("a"))
+    run_once(core, custom, "default")
+    conditions = custom.conditions("quotaoverrides", "o")
+    assert conditions["Targeted"] == ("True", "") and conditions["Applied"] == ("True", "")
+    assert core.quotas["a", "quota-warden"].spec.hard == {"cpu": "1"}
 
 
 def test_base_is_read_by_base_name():

@@ -259,11 +259,37 @@ def test_removing_the_last_override_without_a_base_deletes_the_quota():
     assert core.quotas == {}
 
 
-def test_issues_are_reported_once_and_only_for_reconciled_namespaces():
+def test_issues_are_reported_once_including_inert_overrides():
     core = FakeCore([namespace("a"), namespace("b"), namespace("c", managed=False)])
-    overrides = [override("a-o", "a", cpu="x"), override("c-o", "c", cpu="y")]
+    overrides = [
+        override("a-o", "a", cpu="x"),
+        override("c-o", "c", cpu="y"),
+        override("gone-o", "gone", cpu="z"),
+    ]
     _, issues = run(core, base(memory="z"), overrides)
-    assert sorted((i.source, i.key) for i in issues) == [("a-o", "cpu"), ("default", "memory")]
+    assert sorted((i.source, i.key) for i in issues) == [
+        ("a-o", "cpu"),
+        ("c-o", "cpu"),
+        ("default", "memory"),
+        ("gone-o", "cpu"),
+    ]
+
+
+def test_skipped_namespaces_carry_the_reason():
+    core = FakeCore(
+        [
+            namespace("u", managed=False),
+            namespace("kube-system"),
+            namespace("t", phase="Terminating"),
+        ]
+    )
+    results, _ = run(core, base(cpu="1"))
+    assert {n: r.reason for n, r in results.items()} == {
+        "u": "Unmanaged",
+        "kube-system": "Protected",
+        "t": "Terminating",
+    }
+    assert core.writes == []
 
 
 def test_duplicate_overrides_take_the_max_and_report_both():

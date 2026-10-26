@@ -81,7 +81,8 @@ def run_once(core, custom, name: str, state: State | None = None) -> list[Event]
     events += _dry_run_events(results, state.dry_run, config)
     if base is not None:
         events += update(custom, "quotabases", base, _source_conditions(base, issues, results))
-    reconciled = {r.namespace for r in results if r.action != "skipped"}
+    skipped = {r.namespace: r.reason for r in results if r.action == "skipped"}
+    listed = {r.namespace for r in results}
     for override in overrides:
         wanted = _source_conditions(override, issues, results)
         name = override["metadata"]["name"]
@@ -93,9 +94,16 @@ def run_once(core, custom, name: str, state: State | None = None) -> list[Event]
             if duplicate
             else Condition("Duplicate", "False", "Unique")
         )
-        # Applied on an unreconciled target would claim a write that never happened
-        if override.get("spec", {}).get("namespace") not in reconciled:
-            wanted = [c for c in wanted if c.type != "Applied"]
+        target = override.get("spec", {}).get("namespace")
+        reason = skipped.get(target) or ("" if target in listed else "NamespaceNotFound")
+        if reason:
+            message = f"namespace {target!r}: {reason}; the override is inert"
+            wanted = [c for c in wanted if c.type != "Applied"] + [
+                Condition("Targeted", "False", reason, message),
+                Condition("Applied", "False", "NotTargeted", message),
+            ]
+        else:
+            wanted.append(Condition("Targeted", "True", "Managed"))
         events += update(custom, "quotaoverrides", override, wanted)
     return events
 

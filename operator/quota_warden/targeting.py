@@ -31,6 +31,10 @@ def validate_selector(selector: dict) -> None:
         _matches_expression({}, expression)
 
 
+def is_protected(name: str, config: dict) -> bool:
+    return name in ALWAYS_PROTECTED or name in (config.get("protectedNamespaces") or [])
+
+
 def is_managed(namespace_labels: dict[str, str], name: str, config: dict) -> bool:
     """`config` is QuotaWardenConfig.spec. Raises SelectorError on a malformed selector."""
     selector = config.get("managedNamespaces")
@@ -41,7 +45,7 @@ def is_managed(namespace_labels: dict[str, str], name: str, config: dict) -> boo
     expressions = [
         _matches_expression(namespace_labels, e) for e in selector.get("matchExpressions") or []
     ]
-    if name in ALWAYS_PROTECTED or name in (config.get("protectedNamespaces") or []):
+    if is_protected(name, config):
         return False
     match_labels = selector.get("matchLabels") or {}
     return all(expressions) and all(namespace_labels.get(k) == v for k, v in match_labels.items())

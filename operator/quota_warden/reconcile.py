@@ -11,7 +11,7 @@ from kubernetes.utils.quantity import parse_quantity
 from .config import Config
 from .merge import Issue, merge
 from .quantity import format_quantity
-from .targeting import is_managed
+from .targeting import is_managed, is_protected
 
 GROUP = "quota-warden.gnush.github.io"
 VERSION = "v1alpha1"
@@ -33,6 +33,8 @@ class Result:
     dry_run: bool = False
     # sources a rejection is attributed to
     blame: tuple[str, ...] = ()
+    # why a namespace was skipped: Unmanaged, Protected or Terminating
+    reason: str = ""
 
 
 def read_object(custom, plural: str, name: str) -> dict | None:
@@ -65,9 +67,13 @@ def sweep(
         result = reconcile_namespace(core, namespace, config, hard)
         if result.action == "rejected":
             result = replace(result, blame=_blame(result.error, base, sources))
-        if result.action != "skipped":
-            issues.update(dict.fromkeys(found))
+        issues.update(dict.fromkeys(found))
         results.append(result)
+    # inert, but their values are still checked
+    listed = {r.namespace for r in results}
+    for target, sources in by_namespace.items():
+        if target not in listed:
+            issues.update(dict.fromkeys(merge({}, sources, [])[1]))
     return results, list(issues)
 
 
@@ -99,9 +105,10 @@ def reconcile_namespace(core, namespace, config: Config, hard: dict[str, str]) -
     name = namespace.metadata.name
     # a terminating namespace refuses writes; its quota goes with it
     if (namespace.status and namespace.status.phase) == "Terminating":
-        return Result(name, "skipped")
+        return Result(name, "skipped", reason="Terminating")
     if not is_managed(namespace.metadata.labels or {}, name, config.spec):
-        return Result(name, "skipped")
+        reason = "Protected" if is_protected(name, config.spec) else "Unmanaged"
+        return Result(name, "skipped", reason=reason)
 
     quotas = core.list_namespaced_resource_quota(name).items
     existing = next((q for q in quotas if q.metadata.name == config.resource_quota_name), None)
