@@ -1,0 +1,5 @@
+# The image needs pyproject.toml and operator/ only. Everything else in the
+# repo would just be context to upload.
+*
+!pyproject.toml
+!operator/
