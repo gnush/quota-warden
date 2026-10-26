@@ -45,6 +45,13 @@ the kustomization. Apply it once the selector matches what you intend.
 
 Overlays are for what differs per cluster; the image is `kustomize edit set image`.
 
+Against the kind cluster, built from the working tree and loaded into the node:
+
+```sh
+make -f cluster/Makefile deploy      # build, load, apply, wait for rollout
+make -f cluster/Makefile undeploy    # deploy/ only; CRDs and sources stay
+```
+
 ## Sources
 
 One ResourceQuota per managed namespace, merged from three cluster-scoped kinds.

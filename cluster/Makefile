@@ -13,7 +13,12 @@ COMPAT_CONTEXT = kind-$(KIND_CLUSTER)-compat
 VENV   := $(ROOT)/.venv
 PYTEST := $(VENV)/bin/pytest
 
-.PHONY: up down down-compat compat e2e clean venv
+# Local tag only: the image is loaded into the node, never pulled. Not `latest`,
+# which would set imagePullPolicy Always and send the kubelet to a registry.
+IMAGE     ?= quota-warden:dev
+NAMESPACE  = quota-warden
+
+.PHONY: up down down-compat compat e2e deploy undeploy clean venv
 
 # `export kubeconfig` repairs a missing config
 CONTEXT_PRESENT = kubectl config get-contexts $(CONTEXT) >/dev/null 2>&1
@@ -64,6 +69,22 @@ down-compat:
 # a failing create stops the run instead of being swallowed before pytest starts
 e2e: | $(if $(NO_UP),,up)
 	E2E_CONTEXT=$(CONTEXT) $(PYTEST) $(ROOT)/tests/e2e -v -p no:cacheprovider
+
+# The operator in a pod under its ServiceAccount, which is where deploy/rbac.yaml
+# is exercised. An overlay cannot live inside the directory it builds from, so the
+# release tag is rewritten in the stream; applying it first would start a pod
+# against an image the node does not have.
+deploy:
+	docker build -t $(IMAGE) $(ROOT)
+	kind load docker-image $(IMAGE) --name $(KIND_CLUSTER)
+	kubectl kustomize $(ROOT) | sed 's#image: ghcr.io/gnush/quota-warden:.*#image: $(IMAGE)#' \
+		| kubectl --context $(CONTEXT) apply -f -
+	kubectl --context $(CONTEXT) -n $(NAMESPACE) rollout status deploy/quota-warden --timeout=120s
+
+# deploy/ only: `delete -k $(ROOT)` would also drop the CRDs and every source
+# in them, which is not what tearing down the operator means
+undeploy:
+	kubectl --context $(CONTEXT) delete -k $(ROOT)/deploy --ignore-not-found
 
 venv:
 	python3 -m venv $(VENV)
