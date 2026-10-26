@@ -6,15 +6,47 @@ whatever cluster `kubectl` happens to point at.
 """
 
 import os
+import time
 
 import pytest
 from kubernetes import client, config
+from kubernetes.client.exceptions import ApiException
 
 LABEL = "app.kubernetes.io/part-of"
 MANAGED_LABEL = {LABEL: "kubeflow-profile"}
 
+GROUP = "quota-warden.gnush.github.io"
+VERSION = "v1alpha1"
+
 # Makefile pins
 SUPPORTED_VERSIONS = ("v1.28.", "v1.37.")
+
+
+def wait_for(predicate, timeout=20.0):
+    deadline = time.monotonic() + timeout
+    while True:
+        value = predicate()
+        if value or time.monotonic() > deadline:
+            return value
+        time.sleep(0.2)
+
+
+def exists(fn, *args):
+    try:
+        fn(*args)
+    except ApiException as exc:
+        if exc.status == 404:
+            return False
+        raise
+    return True
+
+
+def delete(fn, *args):
+    try:
+        fn(*args)
+    except ApiException as exc:
+        if exc.status != 404:
+            raise
 
 
 @pytest.fixture(scope="session")

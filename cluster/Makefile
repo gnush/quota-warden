@@ -18,7 +18,7 @@ PYTEST := $(VENV)/bin/pytest
 IMAGE     ?= quota-warden:dev
 NAMESPACE  = quota-warden
 
-.PHONY: up down down-compat compat e2e deploy undeploy clean venv
+.PHONY: up down down-compat compat e2e e2e-deploy deploy undeploy clean venv
 
 # `export kubeconfig` repairs a missing config
 CONTEXT_PRESENT = kubectl config get-contexts $(CONTEXT) >/dev/null 2>&1
@@ -68,7 +68,8 @@ down-compat:
 # `up` is an order-only prerequisite:
 # a failing create stops the run instead of being swallowed before pytest starts
 e2e: | $(if $(NO_UP),,up)
-	E2E_CONTEXT=$(CONTEXT) $(PYTEST) $(ROOT)/tests/e2e -v -p no:cacheprovider
+	E2E_CONTEXT=$(CONTEXT) $(PYTEST) $(ROOT)/tests/e2e -v -p no:cacheprovider \
+		--ignore=$(ROOT)/tests/e2e/test_deployment.py
 
 # The operator in a pod under its ServiceAccount, which is where deploy/rbac.yaml
 # is exercised. An overlay cannot live inside the directory it builds from, so the
@@ -79,12 +80,20 @@ deploy:
 	kind load docker-image $(IMAGE) --name $(KIND_CLUSTER)
 	kubectl kustomize $(ROOT) | sed 's#image: ghcr.io/gnush/quota-warden:.*#image: $(IMAGE)#' \
 		| kubectl --context $(CONTEXT) apply -f -
+	# the tag never changes, so an edited tree leaves the spec identical and no
+	# rollout starts: the old image would keep running against the new code
+	kubectl --context $(CONTEXT) -n $(NAMESPACE) rollout restart deploy/quota-warden
 	kubectl --context $(CONTEXT) -n $(NAMESPACE) rollout status deploy/quota-warden --timeout=120s
 
 # deploy/ only: `delete -k $(ROOT)` would also drop the CRDs and every source
 # in them, which is not what tearing down the operator means
 undeploy:
 	kubectl --context $(CONTEXT) delete -k $(ROOT)/deploy --ignore-not-found
+
+# The in-pod suite, against the installed Deployment; needs `deploy` first
+e2e-deploy: | $(if $(NO_UP),,up)
+	$(MAKE) -f $(ROOT)/cluster/Makefile deploy
+	E2E_CONTEXT=$(CONTEXT) $(PYTEST) $(ROOT)/tests/e2e/test_deployment.py -v -p no:cacheprovider
 
 venv:
 	python3 -m venv $(VENV)

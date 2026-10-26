@@ -114,15 +114,21 @@ make -f cluster/Makefile venv      # .venv with kopf, kubernetes, pytest
 The committed suite is `tests/e2e`, driven by the Makefile:
 
 ```sh
-make -f cluster/Makefile e2e       # kind v1.37.0, the daily loop
-make -f cluster/Makefile compat    # same suite on v1.28.15, production parity
-make -f cluster/Makefile down      # delete the daily cluster
-make -f cluster/Makefile clean     # delete both
+make -f cluster/Makefile e2e           # kind v1.37.0, the daily loop
+make -f cluster/Makefile e2e-deploy    # the same operator in a pod, under its ServiceAccount
+make -f cluster/Makefile compat        # the daily loop on v1.28.15, production parity
+make -f cluster/Makefile down          # delete the daily cluster
+make -f cluster/Makefile clean         # delete both
 ```
 
-`compat` is advisory. Node images and the `E2E_CONTEXT` contract are documented
-in `cluster/Makefile`; `cluster/fixtures/namespaces.yaml` comments say what each
-namespace is for.
+`e2e` runs `kopf run` on the host, as the kubeconfig's user. `e2e-deploy`
+installs the Deployment and runs the operator from the image instead, which is
+the only place `deploy/rbac.yaml` is exercised — a missing verb only fails there.
+It builds the image, so it takes a minute.
+
+`compat` is advisory and does not include `e2e-deploy`. Node images and the
+`E2E_CONTEXT` contract are documented in `cluster/Makefile`;
+`cluster/fixtures/namespaces.yaml` comments say what each namespace is for.
 
 Unit suites need no cluster: `.venv/bin/pytest`. Lint and format:
 `.venv/bin/ruff check . && .venv/bin/ruff format --check .`

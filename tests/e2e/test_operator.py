@@ -14,23 +14,12 @@ import pytest
 from kubernetes.client.exceptions import ApiException
 from kubernetes.utils.quantity import parse_quantity
 
-from conftest import LABEL, MANAGED_LABEL
+from conftest import GROUP, LABEL, MANAGED_LABEL, VERSION, delete, exists, wait_for
 
-GROUP = "quota-warden.gnush.github.io"
-VERSION = "v1alpha1"
 CONFIG = "e2e"
 BASE = "e2e"
 QUOTA = "quota-warden"
 NAMESPACE = "e2e-operator"
-
-
-def wait_for(predicate, timeout=20.0):
-    deadline = time.monotonic() + timeout
-    while True:
-        value = predicate()
-        if value or time.monotonic() > deadline:
-            return value
-        time.sleep(0.2)
 
 
 def hard(api, namespace=NAMESPACE):
@@ -65,7 +54,7 @@ def operator(api, custom, tmp_path_factory):
         ).stdout
     )
     # a previous run's namespace may still be terminating; creating it would 409
-    wait_for(lambda: not _exists(api.read_namespace, NAMESPACE), timeout=120)
+    wait_for(lambda: not exists(api.read_namespace, NAMESPACE), timeout=120)
     process = Operator(kubeconfig)
     try:
         custom.create_cluster_custom_object(
@@ -87,14 +76,14 @@ def operator(api, custom, tmp_path_factory):
         process.start()
         yield process
     finally:
-        _delete(custom.delete_cluster_custom_object, GROUP, VERSION, "quotabases", BASE)
+        delete(custom.delete_cluster_custom_object, GROUP, VERSION, "quotabases", BASE)
         if process.poll() is None:
             # the operator removes its own quotas once the base is gone
             wait_for(lambda: hard(api) is None and hard(api, "quota-user-a") is None)
         failed = process.stop()
-        _delete(custom.delete_cluster_custom_object, GROUP, VERSION, "quotawardenconfigs", CONFIG)
-        _delete(api.delete_namespace, NAMESPACE)
-        wait_for(lambda: not _exists(api.read_namespace, NAMESPACE), timeout=120)
+        delete(custom.delete_cluster_custom_object, GROUP, VERSION, "quotawardenconfigs", CONFIG)
+        delete(api.delete_namespace, NAMESPACE)
+        wait_for(lambda: not exists(api.read_namespace, NAMESPACE), timeout=120)
         if failed:
             print(process.log.read_text())
 
@@ -134,24 +123,6 @@ class Operator:
         failed = self.process.returncode not in (0, -15)
         self.process = None
         return failed
-
-
-def _exists(fn, *args):
-    try:
-        fn(*args)
-    except ApiException as exc:
-        if exc.status == 404:
-            return False
-        raise
-    return True
-
-
-def _delete(fn, *args):
-    try:
-        fn(*args)
-    except ApiException as exc:
-        if exc.status != 404:
-            raise
 
 
 @pytest.fixture
@@ -337,7 +308,7 @@ def override(custom, operator):
 
     yield _create
     for name in created:
-        _delete(custom.delete_cluster_custom_object, GROUP, VERSION, "quotaoverrides", name)
+        delete(custom.delete_cluster_custom_object, GROUP, VERSION, "quotaoverrides", name)
 
 
 def conditions(custom, name):
@@ -407,7 +378,7 @@ def extension(custom, operator):
 
     yield _create
     for name in created:
-        _delete(custom.delete_cluster_custom_object, GROUP, VERSION, "quotaextensions", name)
+        delete(custom.delete_cluster_custom_object, GROUP, VERSION, "quotaextensions", name)
 
 
 # the cluster's clock is real; these dates are safely on either side of it
@@ -416,7 +387,7 @@ PAST = "2020-01-01"
 
 
 def extension_exists(custom, name):
-    return _exists(custom.get_cluster_custom_object, GROUP, VERSION, "quotaextensions", name)
+    return exists(custom.get_cluster_custom_object, GROUP, VERSION, "quotaextensions", name)
 
 
 def test_extension_adds_on_top_of_the_override(api, base, override, extension):
@@ -509,7 +480,7 @@ def foreign(api):
     body = {"metadata": {"name": "e2e-legacy"}, "spec": {"hard": {"cpu": "100"}}}
     api.create_namespaced_resource_quota(NAMESPACE, body)
     yield "e2e-legacy"
-    _delete(api.delete_namespaced_resource_quota, "e2e-legacy", NAMESPACE)
+    delete(api.delete_namespaced_resource_quota, "e2e-legacy", NAMESPACE)
 
 
 def test_a_foreign_quota_is_reported_without_a_resync(api, custom, base, foreign):
@@ -521,7 +492,7 @@ def test_a_foreign_quota_is_reported_without_a_resync(api, custom, base, foreign
         "default", field_selector=f"involvedObject.name={NAMESPACE},reason=ForeignQuota"
     ).items
     assert any(foreign in e.message for e in warnings)
-    _delete(api.delete_namespaced_resource_quota, foreign, NAMESPACE)
+    delete(api.delete_namespaced_resource_quota, foreign, NAMESPACE)
     assert wait_for(lambda: exclusive(custom).get("status") == "True"), exclusive(custom)
 
 
@@ -535,7 +506,7 @@ def test_delete_mode_removes_the_foreign_quota(api, custom, base, foreign):
 
     set_mode("delete")
     try:
-        assert wait_for(lambda: not _exists(api.read_namespaced_resource_quota, foreign, NAMESPACE))
+        assert wait_for(lambda: not exists(api.read_namespaced_resource_quota, foreign, NAMESPACE))
         assert hard(api) == q(cpu="2")
     finally:
         set_mode("report")
