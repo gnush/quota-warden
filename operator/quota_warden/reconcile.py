@@ -6,11 +6,12 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Literal
 
+from kubernetes.client import V1DeleteOptions, V1Preconditions
 from kubernetes.client.exceptions import ApiException
 from kubernetes.utils.quantity import parse_quantity
 
 from .config import Config
-from .merge import Issue, is_active, merge
+from .merge import Issue, expires_at, is_active, merge
 from .quantity import format_quantity
 from .targeting import is_managed, is_protected
 
@@ -89,6 +90,34 @@ def sweep(
     inactive = [e for e in extensions if not is_active(e, now)]
     issues.update(dict.fromkeys(merge({}, [], inactive)[1]))
     return results, list(issues)
+
+
+def expired(extensions: list[dict], now: datetime) -> list[dict]:
+    """Past their expirationDate; one without a valid date never expires."""
+    return [e for e in extensions if (t := expires_at(e)) is not None and now >= t]
+
+
+def reap(custom, extensions: list[dict]) -> list[str]:
+    """Delete the given extensions; returns the names actually deleted."""
+    deleted = []
+    for extension in extensions:
+        meta = extension["metadata"]
+        # an extension edited since the listing, e.g. renewed, is left to the next sweep
+        options = V1DeleteOptions(
+            preconditions=V1Preconditions(
+                uid=meta.get("uid"), resource_version=meta.get("resourceVersion")
+            )
+        )
+        try:
+            custom.delete_cluster_custom_object(
+                GROUP, VERSION, "quotaextensions", meta["name"], body=options
+            )
+        except ApiException as exc:
+            if exc.status in (404, 409):
+                continue
+            raise
+        deleted.append(meta["name"])
+    return deleted
 
 
 # the API server names each bad key as spec.hard[<key>]

@@ -16,7 +16,7 @@ from kubernetes import config as kube_config
 from .conditions import Condition, Event, update
 from .config import ConfigError, config_name, load, resync_interval
 from .merge import expires_at
-from .reconcile import GROUP, list_objects, read_object, sweep
+from .reconcile import GROUP, expired, list_objects, read_object, reap, sweep
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +27,7 @@ class State:
 
     dry_run: dict[str, tuple] = field(default_factory=dict)  # namespace -> last outcome
     logged: dict[str, str] = field(default_factory=dict)  # topic -> last message
+    would_reap: set[str] = field(default_factory=set)  # extensions reported under dryRun
 
     def log(self, topic: str, level: int, message: str) -> None:
         if self.logged.get(topic) == message:
@@ -104,12 +105,41 @@ def run_once(
         )
         wanted = _targeted(override, wanted, skipped, listed, "override")
         events += update(custom, "quotaoverrides", override, wanted)
+    reaped, reap_events = _reap(custom, expired(extensions, now), state, config.dry_run)
+    events += reap_events
     for extension in extensions:
+        # deleted: a status patch would 404 and its events name a gone object
+        if extension["metadata"]["name"] in reaped:
+            continue
         wanted = _source_conditions(extension, issues, results, config.dry_run)
         wanted = _targeted(extension, wanted, skipped, listed, "extension")
         wanted = _expiry(extension, wanted, now)
         events += update(custom, "quotaextensions", extension, wanted)
     return events
+
+
+def _reap(
+    custom, extensions: list[dict], state: State, dry_run: bool
+) -> tuple[set[str], list[Event]]:
+    """Names deleted, and the dry-run Events."""
+    if not dry_run:
+        state.would_reap.clear()
+        deleted = reap(custom, extensions)
+        for name in deleted:
+            logger.info("deleted expired QuotaExtension %s", name)
+        return set(deleted), []
+    events = []
+    names = {e["metadata"]["name"] for e in extensions}
+    state.would_reap &= names
+    for extension in extensions:
+        name = extension["metadata"]["name"]
+        if name in state.would_reap:
+            continue
+        state.would_reap.add(name)
+        message = "dry run: would delete the expired extension"
+        logger.info("QuotaExtension %s: %s", name, message)
+        events.append(Event(extension, "Normal", "DryRun", message))
+    return set(), events
 
 
 def _targeted(source: dict, wanted, skipped, listed, kind: str) -> list[Condition]:

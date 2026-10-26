@@ -15,6 +15,7 @@ class FakeCustom:
     def __init__(self, *objects):
         self.objects = {(o["plural"], o["metadata"]["name"]): o for o in objects}
         self.patches = 0
+        self.deleted = []
 
     def get_cluster_custom_object(self, group, version, plural, name):
         try:
@@ -28,6 +29,16 @@ class FakeCustom:
     def patch_cluster_custom_object_status(self, group, version, plural, name, body, **_):
         self.patches += 1
         self.objects[plural, name]["status"] = body["status"]
+
+    def delete_cluster_custom_object(self, group, version, plural, name, body):
+        current = self.objects.get((plural, name))
+        if current is None:
+            raise ApiException(status=404)
+        wanted = body.preconditions.resource_version
+        if wanted is not None and wanted != current["metadata"].get("resourceVersion"):
+            raise ApiException(status=409)
+        del self.objects[plural, name]
+        self.deleted.append(name)
 
     def conditions(self, plural, name):
         return {
@@ -185,15 +196,87 @@ def test_extension_with_a_bad_date_is_invalid_and_inert(expires):
     assert ("Warning", "InvalidExpirationDate") in [(e.type, e.reason) for e in events]
 
 
-def test_expired_extension_is_not_applied():
+def test_expired_extension_is_deleted_and_the_quota_drops_back():
     custom = FakeCustom(
-        config(managedNamespaces=SELECTOR), extension("e", "a", "2026-11-07", gpu="8")
+        config(managedNamespaces=SELECTOR),
+        base(gpu="1"),
+        extension("old", "a", "2026-11-07", gpu="8"),
+        extension("live", "a", "2026-11-08", gpu="2"),
     )
+    core = FakeCore([namespace("a")], {("a", "quota-warden"): quota({"gpu": "11"})})
+    events = run_once(core, custom, "default", now=NOW)
+    assert custom.deleted == ["old"]
+    assert core.quotas["a", "quota-warden"].spec.hard == {"gpu": "3"}
+    # no status patch, no events for the deleted object
+    assert all(e.body["metadata"]["name"] != "old" for e in events)
+
+
+def test_expiry_is_observed_without_any_change():
+    # the resync path: same objects, only the clock moved
+    custom = FakeCustom(
+        config(managedNamespaces=SELECTOR),
+        base(gpu="1"),
+        extension("e", "a", "2026-11-08", gpu="8"),
+    )
+    core = FakeCore([namespace("a")])
+    run_once(core, custom, "default", now=NOW)
+    assert core.quotas["a", "quota-warden"].spec.hard == {"gpu": "9"}
+    run_once(core, custom, "default", now=datetime(2026, 11, 9, tzinfo=UTC))
+    assert custom.deleted == ["e"]
+    assert core.quotas["a", "quota-warden"].spec.hard == {"gpu": "1"}
+
+
+def test_expired_extension_on_an_untargeted_namespace_is_deleted():
+    custom = FakeCustom(
+        config(managedNamespaces=SELECTOR), extension("e", "gone", "2026-11-07", gpu="8")
+    )
+    run_once(FakeCore([]), custom, "default", now=NOW)
+    assert custom.deleted == ["e"]
+
+
+@pytest.mark.parametrize("expires", [None, "next week"])
+def test_extension_with_a_bad_date_is_never_deleted(expires):
+    custom = FakeCustom(config(managedNamespaces=SELECTOR), extension("e", "a", expires, gpu="8"))
     run_once(FakeCore([namespace("a")]), custom, "default", now=NOW)
+    assert custom.deleted == []
+
+
+def test_extension_changed_since_the_listing_is_not_deleted():
+    e = extension("e", "a", "2026-11-07", gpu="8")
+    e["metadata"]["resourceVersion"] = "1"
+    custom = FakeCustom(config(managedNamespaces=SELECTOR), e)
+    listed = custom.list_cluster_custom_object
+
+    def list_then_renew(group, version, plural):
+        items = [
+            dict(o, metadata=dict(o["metadata"])) for o in listed(group, version, plural)["items"]
+        ]
+        if plural == "quotaextensions":
+            custom.objects["quotaextensions", "e"]["metadata"]["resourceVersion"] = "2"
+        return {"items": items}
+
+    custom.list_cluster_custom_object = list_then_renew
+    run_once(FakeCore([namespace("a")]), custom, "default", now=NOW)
+    assert custom.deleted == [] and ("quotaextensions", "e") in custom.objects
+
+
+def test_dry_run_reports_the_expired_extension_once_and_keeps_it():
+    custom = FakeCustom(
+        config(managedNamespaces=SELECTOR, dryRun=True), extension("e", "a", "2026-11-07", gpu="8")
+    )
+    core = FakeCore([namespace("a")])
+    state = State()
+    events = run_once(core, custom, "default", state, now=NOW)
+    assert custom.deleted == []
+    assert ("e", "DryRun", "dry run: would delete the expired extension") in [
+        (e.body["metadata"]["name"], e.reason, e.message) for e in events
+    ]
     assert custom.conditions("quotaextensions", "e")["Applied"] == (
         "False",
         "expired at 2026-11-08T00:00:00Z",
     )
+    again = run_once(core, custom, "default", state, now=NOW)
+    assert [e for e in again if e.body["metadata"]["name"] == "e"] == []
 
 
 def test_override_issues_stay_off_the_base():
