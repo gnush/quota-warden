@@ -19,6 +19,7 @@ def create(custom):
                 "quotawardenconfigs": "QuotaWardenConfig",
                 "quotabases": "QuotaBase",
                 "quotaoverrides": "QuotaOverride",
+                "quotaextensions": "QuotaExtension",
             }[plural],
             "metadata": {"name": name},
             "spec": spec,
@@ -64,4 +65,37 @@ def test_override_takes_any_key_as_int_or_string(create):
 def test_override_requires_a_namespace(create, spec):
     with pytest.raises(ApiException) as exc:
         create("quotaoverrides", "e2e-override-no-ns", spec)
+    assert exc.value.status == 422
+
+
+def test_extension_takes_any_key_as_int_or_string(create):
+    spec = {
+        "namespace": "quota-user-a",
+        "expirationDate": "2026-11-08",
+        "resources": {"requests.nvidia.com/gpu": "8", "pods": 30},
+    }
+    assert create("quotaextensions", "e2e-extension", spec)["spec"] == spec
+
+
+def test_extension_accepts_a_past_date(create):
+    # schema checks syntax only; expiry is the operator's
+    spec = {"namespace": "quota-user-a", "expirationDate": "2020-01-01"}
+    assert create("quotaextensions", "e2e-extension-past", spec)["spec"] == spec
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        {"expirationDate": "2026-11-08"},
+        {"namespace": "", "expirationDate": "2026-11-08"},
+        {"namespace": "quota-user-a"},
+        {"namespace": "quota-user-a", "expirationDate": "2026-02-30"},
+        {"namespace": "quota-user-a", "expirationDate": "20261108"},
+        {"namespace": "quota-user-a", "expirationDate": "2026-11-08T00:00:00Z"},
+        {"namespace": "quota-user-a", "expirationDate": "next week"},
+    ],
+)
+def test_extension_requires_a_namespace_and_a_valid_date(create, spec):
+    with pytest.raises(ApiException) as exc:
+        create("quotaextensions", "e2e-extension-invalid", spec)
     assert exc.value.status == 422

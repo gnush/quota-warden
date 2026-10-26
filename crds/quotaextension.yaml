@@ -1,0 +1,54 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: quotaextensions.quota-warden.gnush.github.io
+spec:
+  group: quota-warden.gnush.github.io
+  scope: Cluster
+  names:
+    kind: QuotaExtension
+    plural: quotaextensions
+    singular: quotaextension
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Namespace
+          type: string
+          jsonPath: .spec.namespace
+        # string, not date: a date column renders as an age
+        - name: Expires
+          type: string
+          jsonPath: .spec.expirationDate
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            spec:
+              type: object
+              required: [namespace, expirationDate]
+              properties:
+                namespace:
+                  type: string
+                  minLength: 1
+                # Last active day. format rejects 2026-02-30, the pattern the
+                # other ISO forms the operator's parser also refuses.
+                expirationDate:
+                  type: string
+                  format: date
+                  pattern: '^\d{4}-\d{2}-\d{2}$'
+                # Same as QuotaBase: the merge validates values.
+                resources:
+                  type: object
+                  additionalProperties:
+                    x-kubernetes-int-or-string: true
+            status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
