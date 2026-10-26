@@ -32,7 +32,7 @@ def _resources(source: dict, issues: list[Issue]) -> dict[str, Decimal]:
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
-def _expires_at(extension: dict) -> datetime | None:
+def expires_at(extension: dict) -> datetime | None:
     value = extension.get("spec", {}).get("expirationDate")
     if not isinstance(value, str) or not _DATE.fullmatch(value):
         return None
@@ -46,8 +46,8 @@ def _expires_at(extension: dict) -> datetime | None:
 
 def is_active(extension: dict, now: datetime) -> bool:
     """Whether the extension contributes to the merge; not whether it may be deleted."""
-    expires_at = _expires_at(extension)
-    return expires_at is not None and now < expires_at
+    expires = expires_at(extension)
+    return expires is not None and now < expires
 
 
 def merge(

@@ -134,6 +134,68 @@ def test_extension_counts_until_expiry(now, gpu):
     assert core.quotas["a", "quota-warden"].spec.hard == {"gpu": gpu}
 
 
+NOW = datetime(2026, 11, 8, 12, tzinfo=UTC)
+
+
+def test_extension_gets_conditions_like_an_override():
+    custom = FakeCustom(
+        config(managedNamespaces=SELECTOR),
+        base(cpu="1"),
+        extension("e", "a", "2026-11-08", gpu="8", memory="x"),
+    )
+    run_once(FakeCore([namespace("a")]), custom, "default", now=NOW)
+    conditions = custom.conditions("quotaextensions", "e")
+    assert conditions["Valid"][0] == "False" and "memory" in conditions["Valid"][1]
+    assert conditions["Applied"] == ("True", "")
+    assert conditions["Targeted"] == ("True", "")
+    assert "Duplicate" not in conditions
+
+
+def test_extension_rejection_is_marked_on_the_extension():
+    custom = FakeCustom(
+        config(managedNamespaces=SELECTOR), extension("e", "a", "2026-11-08", bad="1")
+    )
+    run_once(FakeCore([namespace("a")]), custom, "default", now=NOW)
+    assert custom.conditions("quotaextensions", "e")["Applied"][0] == "False"
+
+
+def test_extension_on_an_untargeted_namespace_is_inert():
+    custom = FakeCustom(
+        config(managedNamespaces=SELECTOR), extension("e", "a", "2026-11-08", gpu="8")
+    )
+    run_once(FakeCore([namespace("a", managed=False)]), custom, "default", now=NOW)
+    conditions = custom.conditions("quotaextensions", "e")
+    assert (
+        conditions["Targeted"][0] == "False" and "extension is inert" in conditions["Targeted"][1]
+    )
+    assert conditions["Applied"][0] == "False"
+
+
+@pytest.mark.parametrize("expires", [None, "2026-11", "next week"])
+def test_extension_with_a_bad_date_is_invalid_and_inert(expires):
+    e = extension("e", "a", expires, gpu="8", memory="x")
+    custom = FakeCustom(config(managedNamespaces=SELECTOR), base(gpu="1"), e)
+    core = FakeCore([namespace("a")])
+    events = run_once(core, custom, "default", now=NOW)
+    conditions = custom.conditions("quotaextensions", "e")
+    assert conditions["Valid"][0] == "False"
+    assert "expirationDate" in conditions["Valid"][1] and "memory" in conditions["Valid"][1]
+    assert conditions["Applied"][0] == "False"
+    assert core.quotas["a", "quota-warden"].spec.hard == {"gpu": "1"}
+    assert ("Warning", "InvalidExpirationDate") in [(e.type, e.reason) for e in events]
+
+
+def test_expired_extension_is_not_applied():
+    custom = FakeCustom(
+        config(managedNamespaces=SELECTOR), extension("e", "a", "2026-11-07", gpu="8")
+    )
+    run_once(FakeCore([namespace("a")]), custom, "default", now=NOW)
+    assert custom.conditions("quotaextensions", "e")["Applied"] == (
+        "False",
+        "expired at 2026-11-08T00:00:00Z",
+    )
+
+
 def test_override_issues_stay_off_the_base():
     custom = FakeCustom(
         config(managedNamespaces=SELECTOR), base(cpu="1"), override("o", "a", cpu="x")

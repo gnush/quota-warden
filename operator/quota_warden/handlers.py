@@ -15,6 +15,7 @@ from kubernetes import config as kube_config
 
 from .conditions import Condition, Event, update
 from .config import ConfigError, config_name, load, resync_interval
+from .merge import expires_at
 from .reconcile import GROUP, list_objects, read_object, sweep
 
 logger = logging.getLogger(__name__)
@@ -101,18 +102,49 @@ def run_once(
             if duplicate
             else Condition("Duplicate", "False", "Unique")
         )
-        target = override.get("spec", {}).get("namespace")
-        reason = skipped.get(target) or ("" if target in listed else "NamespaceNotFound")
-        if reason:
-            message = f"namespace {target!r}: {reason}; the override is inert"
-            wanted = [c for c in wanted if c.type != "Applied"] + [
-                Condition("Targeted", "False", reason, message),
-                Condition("Applied", "False", "NotTargeted", message),
-            ]
-        else:
-            wanted.append(Condition("Targeted", "True", "Managed"))
+        wanted = _targeted(override, wanted, skipped, listed, "override")
         events += update(custom, "quotaoverrides", override, wanted)
+    for extension in extensions:
+        wanted = _source_conditions(extension, issues, results, config.dry_run)
+        wanted = _targeted(extension, wanted, skipped, listed, "extension")
+        wanted = _expiry(extension, wanted, now)
+        events += update(custom, "quotaextensions", extension, wanted)
     return events
+
+
+def _targeted(source: dict, wanted, skipped, listed, kind: str) -> list[Condition]:
+    target = source.get("spec", {}).get("namespace")
+    reason = skipped.get(target) or ("" if target in listed else "NamespaceNotFound")
+    if not reason:
+        return wanted + [Condition("Targeted", "True", "Managed")]
+    message = f"namespace {target!r}: {reason}; the {kind} is inert"
+    return [c for c in wanted if c.type != "Applied"] + [
+        Condition("Targeted", "False", reason, message),
+        Condition("Applied", "False", "NotTargeted", message),
+    ]
+
+
+def _expiry(extension: dict, wanted, now) -> list[Condition]:
+    """Overrides Valid and Applied for a date the CRD should have rejected, or a past one."""
+    value = extension.get("spec", {}).get("expirationDate")
+    expires = expires_at(extension)
+    if expires is None:
+        message = f"expirationDate {value!r} is not a YYYY-MM-DD date; the extension is inert"
+        valid = next(c for c in wanted if c.type == "Valid")
+        if valid.status == "False":
+            message += f"; {valid.message}"
+        replaced = [
+            Condition("Valid", "False", "InvalidExpirationDate", message),
+            Condition("Applied", "False", "InvalidExpirationDate", message),
+        ]
+    elif now >= expires:
+        # seen only while the delete is pending or suppressed by dryRun
+        message = f"expired at {expires:%Y-%m-%dT%H:%M:%SZ}"
+        replaced = [Condition("Applied", "False", "Expired", message)]
+    else:
+        return wanted
+    types = {c.type for c in replaced}
+    return [c for c in wanted if c.type not in types] + replaced
 
 
 def _source_conditions(source: dict, issues, results, dry_run: bool) -> list[Condition]:
