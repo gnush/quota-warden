@@ -54,6 +54,7 @@ deployment: `deploy/config.yaml` is an example with `dryRun: true`, not part of
 the kustomization. Apply it once the selector matches what you intend.
 
 Overlays are for what differs per cluster; the image is `kustomize edit set image`.
+With Flux: [docs/flux.md](docs/flux.md).
 
 Log flags are kopf's (see [Running](#running)), appended to the image's
 ENTRYPOINT, so the base passes none: INFO, default format. Per-cluster flags
