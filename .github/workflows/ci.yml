@@ -1,4 +1,4 @@
-name: image
+name: ci
 
 on:
   push:
@@ -9,9 +9,42 @@ on:
       - "*.*.*"
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
+  python:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          # what the image runs on
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e ".[dev]"
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: pytest
+
+  e2e:
+    needs: python
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      # host kind, then the operator in the image it builds; see cluster/Makefile
+      - run: make -f cluster/Makefile venv
+      - run: make -f cluster/Makefile e2e
+      - run: make -f cluster/Makefile e2e-deploy
+
   image:
-    # native arm64 runners, so no QEMU; it assembles the manifest itself
+    needs: [python, e2e]
     uses: docker/github-builder/.github/workflows/build.yml@v1
     permissions:
       contents: read

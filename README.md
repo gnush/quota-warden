@@ -1,7 +1,6 @@
 # Quota Warden
 
-[![image](https://github.com/gnush/quota-warden/actions/workflows/image.yml/badge.svg)](https://github.com/gnush/quota-warden/actions/workflows/image.yml)
-
+[![ci](https://github.com/gnush/quota-warden/actions/workflows/ci.yml/badge.svg)](https://github.com/gnush/quota-warden/actions/workflows/ci.yml)
 
 A Kubernetes operator that writes one ResourceQuota per managed namespace,
 merged from three cluster-scoped sources: a `QuotaBase`, a per-namespace
@@ -76,7 +75,7 @@ Which config is read is `QUOTA_WARDEN_CONFIG` (see [Running](#running)).
 |-------------------------|----------------|-----------------------------------------------------------------------------|
 | `managedNamespaces`     | unset          | label selector over Namespaces; unset manages nothing, `{}` everything      |
 | `protectedNamespaces`   | `[]`           | never managed, on top of `kube-system`, `kube-public` and `kube-node-lease` |
-| `resourceQuotaName`     | `quota-warden` | the ResourceQuota written, and the name a foreign one blocks                |
+| `resourceQuotaName`     | `quota-warden` | the ResourceQuota written                                                   |
 | `baseName`              | `default`      | the `QuotaBase` to read                                                     |
 | `dryRun`                | `false`        | report what would change; write and delete nothing                          |
 | `foreignResourceQuotas` | `report`       | see [Sources](#sources)                                                     |
@@ -160,8 +159,6 @@ installs the Deployment and runs the operator from the image instead, which is
 the only place `deploy/rbac.yaml` is exercised — a missing verb only fails there.
 It builds the image, so it takes a minute.
 
-`compat` is advisory and does not include `e2e-deploy`. Node images and the
-`E2E_CONTEXT` contract are documented in `cluster/Makefile`;
 `cluster/fixtures/namespaces.yaml` comments say what each namespace is for.
 
 Unit suites need no cluster: `.venv/bin/pytest`. Lint and format:
