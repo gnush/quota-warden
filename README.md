@@ -55,6 +55,23 @@ the kustomization. Apply it once the selector matches what you intend.
 
 Overlays are for what differs per cluster; the image is `kustomize edit set image`.
 
+Log flags are kopf's (see [Running](#running)), appended to the image's
+ENTRYPOINT, so the base passes none: INFO, default format. Per-cluster flags
+go in an overlay. `args` is a list, which a strategic-merge patch replaces
+whole, so patch by index:
+
+```yaml
+patches:
+  - target: {kind: Deployment, name: quota-warden}
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --verbose
+```
+
+`--log-format` is `plain`, `full` (default) or `json`; `json` only if something
+ingests the logs.
+
 Against the kind cluster, built from the working tree and loaded into the node:
 
 ```sh
