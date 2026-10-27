@@ -7,12 +7,14 @@ import asyncio
 import json
 import logging
 import os
+import random
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 import kopf
 from kubernetes import client
 from kubernetes import config as kube_config
+from kubernetes.client.exceptions import ApiException
 from kubernetes.utils.quantity import parse_quantity
 
 from .conditions import Condition, Event, update
@@ -22,6 +24,14 @@ from .quantity import format_quantity
 from .reconcile import GROUP, expired, list_objects, read_object, reap, sweep
 
 logger = logging.getLogger(__name__)
+
+# kopf's peering, not leader election of our own: it pauses the lower-ranked
+# replica's timers, daemons and watch streams, which is all a sweep touches.
+PEERING_NAME = "default"
+PEERING_OBJECT = "clusterkopfpeerings"
+# 32768: kopf's documented $RANDOM range. A collision pauses both replicas --
+# a stall, which the next rollout clears -- so the draw need only be unlikely.
+PRIORITIES = 32768
 
 
 @dataclass
@@ -353,7 +363,12 @@ def _dry_run_events(results, reported: dict, config) -> list[Event]:
 
 
 class Sweeper:
-    """Serialises sweeps; requests made during a sweep collapse into one rerun."""
+    """Serialises sweeps; requests made during a sweep collapse into one rerun.
+
+    The loop runs inside a kopf daemon, not a bare asyncio task: peering pauses
+    pipelined tasks only, and a paused replica that kept resyncing would sweep
+    concurrently with the active one.
+    """
 
     def __init__(self, run, interval: float, debounce: float = 1.0):
         self._run = run
@@ -361,28 +376,24 @@ class Sweeper:
         self._debounce = debounce
         self._requested = asyncio.Event()
         self._requested.set()
-        self._task = None
 
     def request(self) -> None:
-        # Starts the loop on first use, from a handler: kopf.event needs the
-        # posting context, which startup handlers lack.
-        if self._task is None:
-            self._task = asyncio.create_task(self.loop())
         self._requested.set()
 
-    def stop(self) -> None:
-        if self._task is not None:
-            self._task.cancel()
-
-    async def loop(self) -> None:
-        while True:
-            try:
-                await asyncio.wait_for(self._requested.wait(), self._interval)
-                # kopf delivers the initial listing one object at a time; without
-                # the wait each one lands after the previous sweep, N sweeps of N
-                await asyncio.sleep(self._debounce)
-            except TimeoutError:
-                pass
+    async def loop(self, stopped) -> None:
+        """One long-lived daemon: `stopped` is set on pause, shutdown and object deletion."""
+        while not stopped:
+            if (
+                await _first(
+                    None, {"stop": _until(stopped), "done": self._requested.wait()}, self._interval
+                )
+                == "stop"
+            ):
+                return
+            # kopf delivers the initial listing one object at a time; without the
+            # wait each one lands after the previous sweep, N sweeps of N
+            if await _first(None, {"stop": _until(stopped)}, self._debounce) == "stop":
+                return
             self._requested.clear()
             try:
                 await self._run()
@@ -391,8 +402,34 @@ class Sweeper:
                 logger.exception("sweep failed")
 
 
+async def _first(fallback, coros: dict, timeout: float | None):
+    """The key of the first coroutine to finish, `fallback` on timeout.
+
+    Every wait in the loop goes through this: kopf's default cancellation_timeout
+    is None, so a daemon still asleep at the interval is force-cancelled and
+    logged as "did not exit in time" on every pause and shutdown.
+    """
+    tasks = {asyncio.create_task(coro): key for key, coro in coros.items()}
+    if timeout is not None:
+        tasks[asyncio.create_task(asyncio.sleep(timeout))] = None
+    try:
+        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for task in tasks:
+            task.cancel()
+    # a stop wins a tie: the sweep it would have started must not run
+    keys = {tasks[task] for task in done}
+    return "stop" if "stop" in keys else next(iter(keys), fallback)
+
+
+async def _until(stopped) -> None:
+    # `stopped.wait()` yields kopf's own promise object, not a coroutine
+    while not stopped:
+        await stopped.wait(0.5)
+
+
 @kopf.on.startup()
-async def startup(memo: kopf.Memo, **_):
+async def startup(settings: kopf.OperatorSettings, memo: kopf.Memo, **_):
     try:
         interval = resync_interval(os.environ)
     except ConfigError as exc:
@@ -417,10 +454,45 @@ async def startup(memo: kopf.Memo, **_):
     memo.sweeper = Sweeper(run, interval.total_seconds())
     memo.quotas = {}
 
+    await asyncio.to_thread(configure_peering, settings)
 
-@kopf.on.cleanup()
-async def cleanup(memo: kopf.Memo, **_):
-    memo.sweeper.stop()
+
+def configure_peering(settings) -> None:
+    """Our place in kopf's peering, and the object its keep-alives patch.
+
+    `--priority` cannot do this: it is one value in the pod template every
+    replica shares, and equal priorities pause *every* replica, the first
+    included.
+    """
+    settings.peering.name = PEERING_NAME
+    settings.peering.priority = random.randrange(PRIORITIES)
+    # without this a missing peering object silently means standalone: two
+    # replicas sweeping, the very thing peering is here to stop
+    settings.peering.mandatory = True
+    ensure_peering()
+    logger.info("peering priority %d", settings.peering.priority)
+
+
+def ensure_peering() -> None:
+    """Create the ClusterKopfPeering if absent.
+
+    `mandatory` pauses every watch stream until it exists, and kopf never
+    creates it.
+    """
+    body = {
+        "apiVersion": "kopf.dev/v1",
+        "kind": "ClusterKopfPeering",
+        "metadata": {"name": PEERING_NAME},
+    }
+    try:
+        client.CustomObjectsApi().create_cluster_custom_object(
+            "kopf.dev", "v1", PEERING_OBJECT, body
+        )
+        logger.info("created ClusterKopfPeering %s", PEERING_NAME)
+    except ApiException as exc:
+        # already there: whoever deployed it owns it, and deleting it is not ours
+        if exc.status != 409:
+            raise kopf.PermanentError(f"ClusterKopfPeering {PEERING_NAME}: {exc.reason}") from exc
 
 
 # on.event, not on.create/update: those write progress annotations onto every
@@ -461,3 +533,18 @@ async def quota_event(memo: kopf.Memo, body, type, **_):
 # Per-object memos are shallow copies, so state lives in the shared Sweeper.
 async def request_sweep(memo: kopf.Memo, **_):
     memo.sweeper.request()
+
+
+def _is_configured_config(name: str, **_):
+    # strictly sync, so no environ lookup is cached: it is read once per object event
+    return name == config_name(os.environ)
+
+
+# A daemon, not a task beside startup: peering stops daemons on a pause, and a
+# paused replica must not keep resyncing -- that is the concurrent sweep that
+# peering exists to prevent. One per object, so only the configured one runs.
+# requires_finalizer leaves kopf's marker on that object; it is on the config,
+# not on every Namespace, and it is what makes the daemon's lifetime that object's.
+@kopf.daemon(GROUP, "quotawardenconfigs", when=_is_configured_config)
+async def sweep_loop(stopped, memo: kopf.Memo, **_):
+    await memo.sweeper.loop(stopped)

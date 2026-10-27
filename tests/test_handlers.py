@@ -425,8 +425,43 @@ def test_standing_config_error_logs_once_then_debug(caplog):
     assert "QuotaBase 'default' not found" in infos
 
 
+class Stopped:
+    """kopf's `stopped` kwarg: bool, set once, and `wait()` as kopf returns it.
+
+    kopf hands back an awaitable checker, not a coroutine, so awaiting it in a
+    `create_task` raises -- which a plain `asyncio.Event` here would not catch.
+    """
+
+    def __init__(self):
+        self.set = False
+        self._event = asyncio.Event()
+
+    def __bool__(self):
+        return self.set
+
+    def stop(self):
+        self.set = True
+        self._event.set()
+
+    def wait(self, timeout=None):
+        event = self._event
+
+        class Promise:
+            def __await__(inner):
+                return inner._wait().__await__()
+
+            async def _wait(inner):
+                # kopf swallows the timeout and returns the checker
+                try:
+                    await asyncio.wait_for(event.wait(), timeout=timeout)
+                except TimeoutError:
+                    pass
+
+        return Promise()
+
+
 def drive(script, debounce=0.0, interval=3600.0, fail_on=None):
-    """Run `script(sweeper, runs)` against a Sweeper whose sweeps are counted."""
+    """Run `script(sweeper, runs)` with the loop started as the daemon starts it."""
 
     async def main():
         runs = []
@@ -437,23 +472,24 @@ def drive(script, debounce=0.0, interval=3600.0, fail_on=None):
                 raise RuntimeError("boom")
 
         sweeper = Sweeper(run, interval=interval, debounce=debounce)
+        stopped = Stopped()
+        task = asyncio.create_task(sweeper.loop(stopped))
         try:
             await script(sweeper, runs)
         finally:
-            sweeper.stop()
+            task.cancel()
 
     asyncio.run(main())
 
 
-async def settle():
-    for _ in range(5):
+async def settle(rounds=30):
+    # each loop iteration spans several awaits, each task start needing a turn
+    for _ in range(rounds):
         await asyncio.sleep(0)
 
 
-def test_sweeper_starts_one_loop_however_often_requested():
+def test_the_loop_runs_a_sweep_for_the_request_made_at_startup():
     async def script(sweeper, runs):
-        for _ in range(10):
-            sweeper.request()
         await settle()
         assert runs == [0]
 
@@ -470,14 +506,56 @@ def test_sweeper_collapses_requests_made_during_a_sweep():
             await gate.wait()
 
         sweeper = Sweeper(run, interval=3600, debounce=0)
-        sweeper.request()
+        task = asyncio.create_task(sweeper.loop(Stopped()))
         await settle()
         for _ in range(3):
             sweeper.request()
         gate.set()
         await settle()
-        sweeper.stop()
+        task.cancel()
         assert runs == [1, 1]
+
+    asyncio.run(main())
+
+
+def test_a_stopped_loop_sweeps_nothing_more():
+    # what a peering pause sets: the daemon's stopper
+    async def main():
+        runs = []
+
+        async def run():
+            runs.append(1)
+
+        sweeper = Sweeper(run, interval=0.01, debounce=0)
+        stopped = Stopped()
+        task = asyncio.create_task(sweeper.loop(stopped))
+        await asyncio.sleep(0.05)
+        before = len(runs)
+        assert before > 0
+        stopped.stop()
+        await asyncio.sleep(0.05)
+        assert len(runs) == before
+        task.cancel()
+
+    asyncio.run(main())
+
+
+def test_a_stop_wakes_the_loop_out_of_a_long_interval():
+    # otherwise kopf force-cancels the daemon, logging "did not exit in time"
+    async def main():
+        runs = []
+
+        async def run():
+            runs.append(1)
+
+        sweeper = Sweeper(run, interval=3600, debounce=0)
+        stopped = Stopped()
+        task = asyncio.create_task(sweeper.loop(stopped))
+        await settle()
+        stopped.stop()
+        # returns on its own well inside the flush: no cancellation needed
+        await asyncio.wait_for(task, timeout=1)
+        assert len(runs) == 1  # the startup request; none after the stop
 
     asyncio.run(main())
 
@@ -495,7 +573,6 @@ def test_sweeper_survives_a_failed_sweep():
 
 def test_sweeper_resyncs_without_requests():
     async def script(sweeper, runs):
-        sweeper.request()
         await asyncio.sleep(0.1)
         assert len(runs) > 2
 
@@ -686,3 +763,69 @@ def test_unmanage_under_dry_run_is_reported_not_done():
         )
     ]
     assert ("a", "quota-warden") in core.quotas
+
+
+def configure_peering(settings, monkeypatch, priority=7, status=None):
+    """What startup does to the peering settings, without the API clients."""
+    import quota_warden.handlers as handlers
+
+    created = []
+
+    class Coordination:
+        def create_cluster_custom_object(self, group, version, plural, body):
+            created.append((group, version, plural, body))
+            if status is not None:
+                raise ApiException(status=status)
+
+    monkeypatch.setattr(handlers.client, "CustomObjectsApi", lambda: Coordination())
+    monkeypatch.setattr(
+        handlers, "random", type("R", (), {"randrange": staticmethod(lambda n: priority)})
+    )
+    handlers.configure_peering(settings)
+    return created
+
+
+class Peering:
+    def __init__(self):
+        self.name = None
+        self.priority = None
+        self.mandatory = None
+
+
+class Settings:
+    def __init__(self):
+        self.peering = Peering()
+
+
+def test_peering_is_mandatory_and_distinct_per_replica(monkeypatch):
+    settings = Settings()
+    created = configure_peering(settings, monkeypatch)
+
+    # without it a missing peering object is silently standalone: two replicas sweep
+    assert settings.peering.mandatory is True
+    assert settings.peering.name == "default"
+    assert settings.peering.priority == 7
+    group, version, plural, body = created[0]
+    assert (group, version, plural) == ("kopf.dev", "v1", "clusterkopfpeerings")
+    assert body["metadata"]["name"] == "default"
+
+
+def test_priorities_are_drawn_from_kopfs_documented_range(monkeypatch):
+    import quota_warden.handlers as handlers
+
+    assert handlers.PRIORITIES == 32768
+
+
+def test_an_existing_peering_object_is_left_alone(monkeypatch):
+    # a 409 is another owner's object, not a failure
+    configure_peering(Settings(), monkeypatch, status=409)
+
+
+def test_a_missing_peering_crd_is_reported(monkeypatch):
+    import kopf
+
+    import quota_warden.handlers as handlers
+
+    with pytest.raises(kopf.PermanentError):
+        configure_peering(Settings(), monkeypatch, status=404)
+    assert handlers.PEERING_NAME == "default"
