@@ -1,6 +1,6 @@
 [project]
 name = "quota-warden"
-version = "1.2.0"
+version = "1.2.1"
 description = "Sole writer of ResourceQuota objects in the namespaces it manages"
 requires-python = ">=3.11"
 dependencies = [

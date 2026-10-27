@@ -15,6 +15,19 @@ spec:
       storage: true
       subresources:
         status: {}
+      additionalPrinterColumns:
+        - name: Ready
+          type: string
+          jsonPath: '.status.conditions[?(@.type=="Ready")].status'
+        - name: DryRun
+          type: boolean
+          jsonPath: .spec.dryRun
+        - name: Quota
+          type: string
+          jsonPath: .spec.resourceQuotaName
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
       schema:
         openAPIV3Schema:
           type: object

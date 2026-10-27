@@ -25,9 +25,19 @@ spec:
         - name: Memory
           type: string
           jsonPath: .spec.resources.memory
+        - name: Valid
+          type: string
+          jsonPath: '.status.conditions[?(@.type=="Valid")].status'
+        - name: Applied
+          type: string
+          jsonPath: '.status.conditions[?(@.type=="Applied")].reason'
         - name: Age
           type: date
           jsonPath: .metadata.creationTimestamp
+        # See QuotaBase: the only column that can show keys the CRD does not name.
+        - name: All
+          type: string
+          jsonPath: .spec.resources
       schema:
         openAPIV3Schema:
           type: object

@@ -23,9 +23,27 @@ spec:
         - name: Expires
           type: string
           jsonPath: .spec.expirationDate
+        - name: CPU
+          type: string
+          jsonPath: .spec.resources.cpu
+        - name: Memory
+          type: string
+          jsonPath: .spec.resources.memory
+        # Separate from Status: an invalid value drops that key while the merge
+        # still applies the rest, so Applied alone hides it.
+        - name: Valid
+          type: string
+          jsonPath: '.status.conditions[?(@.type=="Valid")].status'
+        - name: Status
+          type: string
+          jsonPath: '.status.conditions[?(@.type=="Applied")].reason'
         - name: Age
           type: date
           jsonPath: .metadata.creationTimestamp
+        # See QuotaBase: the only column that can show keys the CRD does not name.
+        - name: All
+          type: string
+          jsonPath: .spec.resources
       schema:
         openAPIV3Schema:
           type: object

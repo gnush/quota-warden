@@ -1,5 +1,8 @@
 """The CRD schema contract the operator reads against."""
 
+import os
+import subprocess
+
 import pytest
 from kubernetes.client.exceptions import ApiException
 
@@ -126,3 +129,54 @@ def test_extension_requires_a_namespace_and_a_valid_date(create, spec):
     with pytest.raises(ApiException) as exc:
         create("quotaextensions", "e2e-extension-invalid", spec)
     assert exc.value.status == 422
+
+
+COLUMNS = {
+    "quotabases": (
+        {"e2e-columns": {"resources": {"cpu": "18", "memory": "130Gi"}}},
+        ["NAME", "CPU", "MEMORY", "VALID", "APPLIED", "AGE", "ALL"],
+    ),
+    # an override is named after its namespace
+    "quotaoverrides": (
+        {"quota-user-a": {"namespace": "quota-user-a", "resources": {"cpu": "2"}}},
+        ["NAME", "NAMESPACE", "CPU", "MEMORY", "VALID", "APPLIED", "AGE", "ALL"],
+    ),
+    "quotaextensions": (
+        {"e2e-columns": {"namespace": "quota-user-a", "expirationDate": "2026-11-08",
+                         "resources": {"cpu": "2"}}},
+        ["NAME", "NAMESPACE", "EXPIRES", "CPU", "MEMORY", "VALID", "STATUS", "AGE", "ALL"],
+    ),
+    "quotawardenconfigs": (
+        {"e2e-columns": {}},
+        ["NAME", "READY", "DRYRUN", "QUOTA", "AGE"],
+    ),
+}
+
+
+@pytest.mark.parametrize("plural", COLUMNS)
+def test_printer_columns(create, plural):
+    # `kubectl get` prints no header for an empty list, so each kind needs a row
+    specs, expected = COLUMNS[plural]
+    for name, spec in specs.items():
+        create(plural, name, spec)
+    header = subprocess.run(
+        ["kubectl", "--context", os.environ["E2E_CONTEXT"], "get", plural],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()[0]
+    assert header.split() == expected
+
+
+def test_the_all_column_shows_keys_no_other_column_names(create):
+    spec = {"namespace": "quota-user-a", "expirationDate": "2026-11-08",
+            "resources": {"requests.nvidia.com/gpu": "8"}}
+    create("quotaextensions", "e2e-extension-columns", spec)
+    row = subprocess.run(
+        ["kubectl", "--context", os.environ["E2E_CONTEXT"], "get", "quotaextensions",
+         "e2e-extension-columns"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()[1]
+    assert '"requests.nvidia.com/gpu":"8"' in row

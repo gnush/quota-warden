@@ -15,6 +15,28 @@ spec:
       storage: true
       subresources:
         status: {}
+      additionalPrinterColumns:
+        - name: CPU
+          type: string
+          jsonPath: .spec.resources.cpu
+        - name: Memory
+          type: string
+          jsonPath: .spec.resources.memory
+        - name: Valid
+          type: string
+          jsonPath: '.status.conditions[?(@.type=="Valid")].status'
+        - name: Applied
+          type: string
+          jsonPath: '.status.conditions[?(@.type=="Applied")].reason'
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+        # The whole map as JSON. Printer columns are fixed at apply time and the
+        # API rejects `{range}` in jsonPath, so this is the only way a key the
+        # columns above do not name stays visible in `kubectl get`.
+        - name: All
+          type: string
+          jsonPath: .spec.resources
       schema:
         openAPIV3Schema:
           type: object
