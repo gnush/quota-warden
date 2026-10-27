@@ -24,8 +24,7 @@ DEPLOYMENT = "quota-warden"
 # matches no fixture namespace: the two e2e modules see none of each other's objects
 LABEL = "e2e-deployment"
 MANAGED_LABEL = {LABEL: "yes"}
-# what deploy/deployment.yaml names in QUOTA_WARDEN_CONFIG
-CONFIG = "default"
+CONFIG = "e2e-deployment"
 BASE = "e2e-deployment"
 QUOTA = "quota-warden"
 TARGET = "e2e-deployment-ns"

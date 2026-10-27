@@ -2,7 +2,7 @@ from datetime import timedelta
 
 import pytest
 
-from quota_warden.config import ConfigError, config_name, load, resync_interval
+from quota_warden.config import ConfigError, load, resync_interval
 
 # as stored: the CRD fills the defaults
 DEFAULTS = {
@@ -55,11 +55,6 @@ def test_field_the_crd_should_default_is_an_error():
     with pytest.raises(ConfigError, match="resourceQuotaName missing"):
         spec = {k: v for k, v in DEFAULTS.items() if k != "resourceQuotaName"}
         load({"spec": {**spec, "managedNamespaces": {}}})
-
-
-def test_config_name():
-    assert config_name({}) == "default"
-    assert config_name({"QUOTA_WARDEN_CONFIG": "other"}) == "other"
 
 
 @pytest.mark.parametrize(

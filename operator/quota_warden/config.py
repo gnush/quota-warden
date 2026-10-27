@@ -7,7 +7,6 @@ from typing import Literal
 
 from .targeting import SelectorError, validate_selector
 
-DEFAULT_CONFIG_NAME = "default"
 DEFAULT_RESYNC_INTERVAL = "1h"
 
 _DURATION = re.compile(r"([1-9]\d*)([smh])")
@@ -51,10 +50,6 @@ def load(body: dict | None) -> Config:
         )
     except KeyError as exc:
         raise ConfigError(f"{exc.args[0]} missing; is the CRD up to date?") from None
-
-
-def config_name(environ) -> str:
-    return environ.get("QUOTA_WARDEN_CONFIG") or DEFAULT_CONFIG_NAME
 
 
 def resync_interval(environ) -> timedelta:

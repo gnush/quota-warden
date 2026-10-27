@@ -18,10 +18,10 @@ from kubernetes.client.exceptions import ApiException
 from kubernetes.utils.quantity import parse_quantity
 
 from .conditions import Condition, Event, update
-from .config import ConfigError, config_name, load, resync_interval
+from .config import ConfigError, load, resync_interval
 from .merge import expires_at
 from .quantity import format_quantity
-from .reconcile import GROUP, base_of, expired, list_objects, read_object, reap, sweep
+from .reconcile import GROUP, expired, list_objects, reap, singleton, sweep
 
 logger = logging.getLogger(__name__)
 
@@ -52,37 +52,46 @@ class State:
         logger.log(level, message)
 
 
-def run_once(
-    core, custom, name: str, state: State | None = None, now: datetime | None = None
-) -> list[Event]:
+def run_once(core, custom, state: State | None = None, now: datetime | None = None) -> list[Event]:
     """One sweep, conditions included. Blocking; returns the Events to post."""
     state = state or State()
     now = now or datetime.now(UTC)
-    body = read_object(custom, "quotawardenconfigs", name)
+    configs = list_objects(custom, "quotawardenconfigs")
+    body, config_error = singleton(configs, "QuotaWardenConfig")
     try:
+        if config_error:
+            raise ConfigError(config_error)
         config = load(body)
     except ConfigError as exc:
         # fail-safe: existing quotas stay as they are
-        state.log("config", logging.ERROR, f"config {name!r}: {exc}; touching no namespace")
+        state.log("config", logging.ERROR, f"config: {exc}; touching no namespace")
         if body is None:
-            return []
-        return update(
-            custom,
-            "quotawardenconfigs",
-            body,
-            [Condition("Ready", "False", "ConfigError", str(exc))],
-        )
+            # ambiguous: the error is about the set, so every member carries it
+            targets = configs
+        else:
+            targets = [body]
+        events = []
+        for target in targets:
+            events += update(
+                custom,
+                "quotawardenconfigs",
+                target,
+                [Condition("Ready", "False", "ConfigError", str(exc))],
+            )
+        return events
     ready = (
         Condition("Ready", "True", "DryRun", "dryRun is set; nothing is written")
         if config.dry_run
         else Condition("Ready", "True", "Loaded")
     )
     state.log(
-        "config", logging.INFO, f"config {name!r} loaded" + (", dry run" if config.dry_run else "")
+        "config",
+        logging.INFO,
+        f"config {body['metadata']['name']!r} loaded" + (", dry run" if config.dry_run else ""),
     )
 
     bases = list_objects(custom, "quotabases")
-    base, base_error = base_of(bases)
+    base, base_error = singleton(bases, "QuotaBase")
     if base_error:
         state.log("base", logging.ERROR, f"{base_error}; touching no namespace")
         # the bases are not read, so only the config can carry the report
@@ -384,12 +393,30 @@ class Sweeper:
         self._debounce = debounce
         self._requested = asyncio.Event()
         self._requested.set()
+        # kopf runs one daemon per config object; only the first may sweep, the
+        # rest wait here and take over when it stops
+        self._leading = False
+        self._free = asyncio.Event()
+        self._free.set()
 
     def request(self) -> None:
         self._requested.set()
 
     async def loop(self, stopped) -> None:
         """One long-lived daemon: `stopped` is set on pause, shutdown and object deletion."""
+        while not self._free.is_set():
+            available = self._free.wait()
+            if await _first(None, {"stop": _until(stopped), "free": available}, 30) == "stop":
+                return
+        self._leading = True
+        self._free.clear()
+        try:
+            await self._sweep(stopped)
+        finally:
+            self._leading = False
+            self._free.set()
+
+    async def _sweep(self, stopped) -> None:
         while not stopped:
             if (
                 await _first(
@@ -446,7 +473,7 @@ async def startup(settings: kopf.OperatorSettings, memo: kopf.Memo, **_):
         kube_config.load_incluster_config()
     except kube_config.ConfigException:
         kube_config.load_kube_config()
-    core, custom, name = client.CoreV1Api(), client.CustomObjectsApi(), config_name(os.environ)
+    core, custom = client.CoreV1Api(), client.CustomObjectsApi()
 
     # One line per watch event ("Handler 'request_sweep' succeeded") says nothing:
     # the handler only requests a sweep. --verbose/--debug keep it.
@@ -456,7 +483,7 @@ async def startup(settings: kopf.OperatorSettings, memo: kopf.Memo, **_):
     state = State()
 
     async def run():
-        for e in await asyncio.to_thread(run_once, core, custom, name, state):
+        for e in await asyncio.to_thread(run_once, core, custom, state=state):
             kopf.event(e.body, type=e.type, reason=e.reason, message=e.message)
 
     memo.sweeper = Sweeper(run, interval.total_seconds())
@@ -543,16 +570,18 @@ async def request_sweep(memo: kopf.Memo, **_):
     memo.sweeper.request()
 
 
-def _is_configured_config(name: str, **_):
-    # strictly sync, so no environ lookup is cached: it is read once per object event
-    return name == config_name(os.environ)
+def _no_filter(**_):
+    return True
 
 
 # A daemon, not a task beside startup: peering stops daemons on a pause, and a
 # paused replica must not keep resyncing -- that is the concurrent sweep that
-# peering exists to prevent. One per object, so only the configured one runs.
+# peering exists to prevent. Its lifetime is a config object's, so creating the
+# first one starts the loop and deleting the last stops it, without a restart.
+# kopf runs one daemon per config object, so Sweeper.loop() admits only the first
+# and the others wait to take over.
 # requires_finalizer leaves kopf's marker on that object; it is on the config,
-# not on every Namespace, and it is what makes the daemon's lifetime that object's.
-@kopf.daemon(GROUP, "quotawardenconfigs", when=_is_configured_config)
+# not on every Namespace, and that is what makes the daemon's lifetime its own.
+@kopf.daemon(GROUP, "quotawardenconfigs")
 async def sweep_loop(stopped, memo: kopf.Memo, **_):
     await memo.sweeper.loop(stopped)

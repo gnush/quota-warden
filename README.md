@@ -29,7 +29,6 @@ while that config is missing or invalid.
 
 | Env var                        | Default   |                                                                                                                             |
 |--------------------------------|-----------|-----------------------------------------------------------------------------------------------------------------------------|
-| `QUOTA_WARDEN_CONFIG`          | `default` | name of the `QuotaWardenConfig` to read                                                                                     |
 | `QUOTA_WARDEN_RESYNC_INTERVAL` | `1h`      | full sweep without a triggering event; `<n>s`, `<n>m` or `<n>h`; read at startup. An expiry takes effect at most this late. |
 
 ## Deploying
@@ -134,10 +133,12 @@ can override without vendoring the manifests differs:
 ## Configuration
 
 One cluster-scoped `QuotaWardenConfig` drives the operator:
-whichnamespaces are managed, which quota is written and whether it is written at all.
+which namespaces are managed, which quota is written and whether it is written at all.
 Editing it triggers a sweep. A missing or invalid config touches no namespace:
 the operator logs `ConfigError` and, when the object exists, sets `Ready=False`.
-Which config is read is `QUOTA_WARDEN_CONFIG` (see [Running](#running)).
+The operator reads whichever config exists; two is a configuration error
+(`Ready=False/ConfigError`) and touches nothing. Creating the first one starts
+the sweep loop and deleting the last one stops it, with no restart either way.
 `deploy/config.yaml` is a worked example.
 
 | Field                   | Default        |                                                                             |

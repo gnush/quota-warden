@@ -34,8 +34,6 @@ spec:
           args:
             - --liveness=http://0.0.0.0:8080/healthz
           env:
-            - name: QUOTA_WARDEN_CONFIG
-              value: default
             - name: QUOTA_WARDEN_RESYNC_INTERVAL
               value: 1h
           ports:
