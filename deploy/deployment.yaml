@@ -4,11 +4,16 @@ metadata:
   name: quota-warden
   namespace: quota-warden
 spec:
-  # --standalone: kopf does no peering, so a second replica would sweep
-  # concurrently and the two would fight over the same quotas
+  # Raisable: a higher replica gets a higher peering priority by lot and takes
+  # over; the rest stand by paused. One writes at a time regardless of the count.
   replicas: 1
+  # not Recreate: with more than one replica that would stop all of them
+  # between the old and new pod, where a rolling update hands over
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app.kubernetes.io/name: quota-warden

@@ -14,6 +14,11 @@ rules:
   - apiGroups: [""]
     resources: [resourcequotas]
     verbs: [list, watch, create, patch, update, delete]
+  # kopf's peering: the keep-alive patches status on the cluster-wide object,
+  # and create covers the operator making it when the deployment does not
+  - apiGroups: [kopf.dev]
+    resources: [clusterkopfpeerings]
+    verbs: [get, list, watch, patch, create]
   # kopf discovers resources through the CRDs
   - apiGroups: [apiextensions.k8s.io]
     resources: [customresourcedefinitions]
@@ -25,6 +30,11 @@ rules:
       - quotaoverrides
       - quotaextensions
     verbs: [get, list, watch]
+  # the sweep daemon is kopf's, so kopf adds its finalizer to the config object;
+  # only that kind needs it, and only that kind is patched
+  - apiGroups: [quota-warden.gnush.github.io]
+    resources: [quotawardenconfigs]
+    verbs: [patch]
   # conditions; delete is the extension reaper
   - apiGroups: [quota-warden.gnush.github.io]
     resources:

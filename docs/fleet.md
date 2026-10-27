@@ -38,4 +38,5 @@ means vendoring the manifests into your repo:
 | log flags | `fleet.yaml` with `kustomize.dir` at your overlay, over the vendored copy |
 | namespace | same, via `targetCustomizations[].kustomize.dir` |
 
-`--standalone` means one replica, so do not scale the Deployment.
+Replicas are settable; Fleet needs the same `kustomize.dir` route, since
+`replicas` is not a `fleet.yaml` field. See [Replicas](../README.md#replicas).

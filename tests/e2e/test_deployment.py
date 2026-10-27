@@ -8,6 +8,7 @@ place deploy/rbac.yaml is exercised.
 operator, which this module must not touch.
 """
 
+import time
 from datetime import UTC, datetime
 
 import pytest
@@ -99,12 +100,19 @@ def operator(api, custom):
         delete(api.delete_namespace, name)
 
 
+def running_pods(api):
+    """Running and not terminating: a deleted pod keeps phase Running while it drains."""
+    pods = api.list_namespaced_pod(NAMESPACE, label_selector="app.kubernetes.io/name=quota-warden")
+    return [
+        p
+        for p in pods.items
+        if p.status.phase == "Running" and p.metadata.deletion_timestamp is None
+    ]
+
+
 def pod(api):
-    pods = api.list_namespaced_pod(
-        NAMESPACE, label_selector="app.kubernetes.io/name=quota-warden"
-    ).items
-    running = [p for p in pods if p.status.phase == "Running"]
-    assert len(running) == 1, [(p.metadata.name, p.status.phase) for p in pods]
+    running = running_pods(api)
+    assert len(running) == 1, [(p.metadata.name, p.status.phase) for p in running]
     return running[0]
 
 
@@ -168,10 +176,38 @@ def test_both_probes_point_at_the_liveness_endpoint(api, operator):
     assert pod(api).status.container_statuses[0].ready
 
 
-def test_the_deployment_keeps_a_single_replica(api, operator):
+def test_the_deployment_defaults_to_one_replica(api, operator):
+    # raisable: peering lets only the highest priority sweep. See README, Replicas.
     scale = client.AppsV1Api().read_namespaced_deployment_scale(DEPLOYMENT, NAMESPACE)
-    # --standalone: two replicas sweep concurrently and fight over the same quotas
     assert scale.spec.replicas == 1
+
+
+def test_the_operator_holds_the_peering_object(api, operator):
+    """RBAC: get and patch on kopf.dev/clusterkopfpeerings, and the object exists."""
+    peering = client.CustomObjectsApi().get_cluster_custom_object(
+        "kopf.dev", "v1", "clusterkopfpeerings", "default"
+    )
+    assert peering["status"], peering
+
+
+def test_a_second_replica_pauses_instead_of_sweeping(api, operator):
+    """Scaling up is supported: the loser stands down rather than double-sweeping."""
+    apps = client.AppsV1Api()
+    try:
+        apps.patch_namespaced_deployment_scale(DEPLOYMENT, NAMESPACE, {"spec": {"replicas": 2}})
+        wait_for(lambda: len(running_pods(api)) == 2, timeout=120)
+        time.sleep(20)
+        # both replicas' logs: `logs()` reads one pod, and there are two now
+        output = "\n".join(
+            api.read_namespaced_pod_log(p.metadata.name, NAMESPACE, since_seconds=300)
+            for p in running_pods(api)
+        )
+        assert "peering priority" in output
+        # both draw a priority; one of the two is told to stand down
+        assert "Pausing operations in favour of" in output, output
+    finally:
+        apps.patch_namespaced_deployment_scale(DEPLOYMENT, NAMESPACE, {"spec": {"replicas": 1}})
+        wait_for(lambda: len(running_pods(api)) == 1, timeout=120)
 
 
 # --- the ClusterRole, one grant at a time -----------------------------------

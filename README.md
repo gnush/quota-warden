@@ -14,12 +14,12 @@ before it manages anything — see [Configuration](#configuration).
 
 ```sh
 kubectl apply -f crds/
-.venv/bin/kopf run --all-namespaces --standalone -m quota_warden.handlers
+.venv/bin/kopf run --all-namespaces -m quota_warden.handlers
 ```
 
 In a pod it uses the service account; elsewhere the current kubeconfig context,
-so check `kubectl config current-context` first. `--standalone`: no peering is
-set up, so run a single replica.
+so check `kubectl config current-context` first. `crds/` includes kopf's peering
+CRD, which this refuses to run without — see [Replicas](#replicas).
 
 Log level is kopf's: `--quiet` for problems only, `--verbose` for everything,
 including kopf's per-event lines, which are hidden otherwise.
@@ -45,9 +45,8 @@ kubectl apply -k 'github.com/gnush/quota-warden?ref=1.0.0'
 ```
 
 Installs the CRDs plus `deploy/`: namespace `quota-warden`, ServiceAccount, a
-cluster-wide ClusterRole, and the Deployment. One replica, `Recreate`, because
-`--standalone` has no peering. Liveness and readiness are kopf's
-`/healthz` on 8080.
+cluster-wide ClusterRole, and the Deployment. Liveness and readiness are kopf's
+`/healthz` on 8080. The replica count is yours to raise — see [Replicas](#replicas).
 
 Nothing is managed until a `QuotaWardenConfig` exists, which is left to the
 deployment: `deploy/config.yaml` is an example with `dryRun: true`, not part of
@@ -71,6 +70,47 @@ patches:
 
 `--log-format` is `plain`, `full` (default) or `json`; `json` only if something
 ingests the logs.
+
+## Replicas
+
+`replicas` defaults to 1 and can be raised, e.g. in an overlay:
+
+```yaml
+patches:
+  - target: {kind: Deployment, name: quota-warden}
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+```
+
+kopf [peering](https://kopf.readthedocs.io/en/latest/peering.html) decides which
+one works: each replica draws a random priority in the startup handler
+(`--priority` cannot, since it is one value shared by every replica), and only
+the highest one sweeps. The others stay up, watches warm, paused. A clean exit
+hands over at once; a pod killed hard is given up on after its 60s keep-alive
+lifetime, the longest a takeover takes.
+
+Equal priorities pause *all* replicas, the first included. With a floor of 1 in
+0–32767 two replicas collide about 0.003% of the time; the fix is to roll the
+Deployment, which redraws. At that rate it is a stall, not a lost update.
+
+The pause is kopf's, so it covers watch timers, daemons and streams; the sweep
+loop is a kopf daemon for that reason. A replica that has just started may sweep
+once before it learns of the other, which is harmless: the writes are
+server-side apply with one field manager.
+
+**The peering CRD is not optional.** `crds/clusterkopfpeering.yaml` must be
+installed, and the operator sets `peering.mandatory`. Without the CRD it exits at
+startup naming the permission; without the `ClusterKopfPeering` object it creates
+it, and creates it only with RBAC to do so. Missing either, kopf would otherwise
+fall back to standalone — every replica sweeping, which is the case peering
+exists to prevent.
+
+kopf marks the `QuotaWardenConfig` object with its `kopf.zalando.org/KopfFinalizerMarker`
+finalizer, since the sweep daemon's lifetime is that object's. A GitOps tool that
+owns the object needs to be told to ignore it, or to keep the operator running
+long enough to clear it on delete.
 
 Against the kind cluster, built from the working tree and loaded into the node:
 

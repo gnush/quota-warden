@@ -15,6 +15,7 @@ RUN useradd --create-home --uid 10001 warden
 # numeric: kubelet cannot verify a named user is non-root against runAsNonRoot
 USER 10001
 
-# Standalone: no peering CRDs, so never more than one replica (see README).
+# Peering needs the ClusterKopfPeering CRD (crds/clusterkopfpeering.yaml), and
+# without it the operator will not sweep: it sets peering.mandatory.
 # Extra kopf flags append to these, e.g. `docker run <image> --verbose`.
-ENTRYPOINT ["kopf", "run", "--all-namespaces", "--standalone", "-m", "quota_warden.handlers"]
+ENTRYPOINT ["kopf", "run", "--all-namespaces", "-m", "quota_warden.handlers"]
