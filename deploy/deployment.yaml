@@ -30,7 +30,7 @@ spec:
       containers:
         - name: operator
           # release tag, bumped with the git tag
-          image: ghcr.io/gnush/quota-warden:1.1.0
+          image: ghcr.io/gnush/quota-warden:1.2.0
           args:
             - --liveness=http://0.0.0.0:8080/healthz
           env:
