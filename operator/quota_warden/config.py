@@ -22,7 +22,6 @@ class ConfigError(ValueError):
 class Config:
     spec: dict
     resource_quota_name: str
-    base_name: str
     dry_run: bool
     foreign_resource_quotas: Literal["report", "delete", "ignore"]
     on_unmanage: Literal["delete", "retain"]
@@ -46,7 +45,6 @@ def load(body: dict | None) -> Config:
         return Config(
             spec,
             spec["resourceQuotaName"],
-            spec["baseName"],
             spec["dryRun"],
             spec["foreignResourceQuotas"],
             spec["onUnmanage"],

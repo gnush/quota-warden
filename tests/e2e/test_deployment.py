@@ -89,7 +89,7 @@ def operator(api, custom):
             "apiVersion": f"{GROUP}/{VERSION}",
             "kind": "QuotaWardenConfig",
             "metadata": {"name": CONFIG},
-            "spec": {"managedNamespaces": {"matchLabels": MANAGED_LABEL}, "baseName": BASE},
+            "spec": {"managedNamespaces": {"matchLabels": MANAGED_LABEL}},
         },
     )
     set_base(custom, cpu="2", memory="1Gi")

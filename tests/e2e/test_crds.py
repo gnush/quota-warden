@@ -37,7 +37,6 @@ def test_config_defaults_are_stored(create):
     spec = create("quotawardenconfigs", "e2e-defaults", {})["spec"]
     assert spec == {
         "resourceQuotaName": "quota-warden",
-        "baseName": "default",
         "dryRun": False,
         "foreignResourceQuotas": "report",
         "onUnmanage": "delete",

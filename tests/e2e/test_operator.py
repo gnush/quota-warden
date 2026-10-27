@@ -68,7 +68,6 @@ def operator(api, custom, tmp_path_factory):
                 "spec": {
                     "managedNamespaces": {"matchLabels": MANAGED_LABEL},
                     "protectedNamespaces": ["quota-protected"],
-                    "baseName": BASE,
                 },
             },
         )

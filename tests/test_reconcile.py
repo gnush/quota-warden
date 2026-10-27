@@ -10,9 +10,7 @@ from quota_warden.config import Config
 from quota_warden.reconcile import FIELD_MANAGER, MANAGED_BY, PROVENANCE, read_object, sweep
 
 SELECTOR = {"matchLabels": {"managed": "yes"}}
-CONFIG = Config(
-    {"managedNamespaces": SELECTOR}, "quota-warden", "default", False, "report", "delete"
-)
+CONFIG = Config({"managedNamespaces": SELECTOR}, "quota-warden", False, "report", "delete")
 OWNED = dict([MANAGED_BY])
 
 
@@ -242,7 +240,7 @@ def test_read_object_absent_is_none():
     assert read_object(Absent(), "quotabases", "default") is None
 
 
-DRY = Config(CONFIG.spec, "quota-warden", "default", True, "report", "delete")
+DRY = Config(CONFIG.spec, "quota-warden", True, "report", "delete")
 
 
 def test_dry_run_validates_on_the_server_and_stores_nothing():

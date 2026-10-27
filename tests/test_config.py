@@ -7,7 +7,6 @@ from quota_warden.config import ConfigError, config_name, load, resync_interval
 # as stored: the CRD fills the defaults
 DEFAULTS = {
     "resourceQuotaName": "quota-warden",
-    "baseName": "default",
     "dryRun": False,
     "foreignResourceQuotas": "report",
     "onUnmanage": "delete",
@@ -19,12 +18,8 @@ def body(**spec):
 
 
 def test_load():
-    config = load(body(managedNamespaces={}, baseName="b", dryRun=True))
-    assert (config.resource_quota_name, config.base_name, config.dry_run) == (
-        "quota-warden",
-        "b",
-        True,
-    )
+    config = load(body(managedNamespaces={}, dryRun=True))
+    assert (config.resource_quota_name, config.dry_run) == ("quota-warden", True)
     assert config.spec["managedNamespaces"] == {}
 
 
@@ -57,8 +52,8 @@ def test_malformed_selector_is_an_error_carrying_the_reason(expression):
 
 
 def test_field_the_crd_should_default_is_an_error():
-    with pytest.raises(ConfigError, match="baseName missing"):
-        spec = {k: v for k, v in DEFAULTS.items() if k != "baseName"}
+    with pytest.raises(ConfigError, match="resourceQuotaName missing"):
+        spec = {k: v for k, v in DEFAULTS.items() if k != "resourceQuotaName"}
         load({"spec": {**spec, "managedNamespaces": {}}})
 
 

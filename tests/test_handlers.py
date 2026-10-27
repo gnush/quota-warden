@@ -50,7 +50,6 @@ class FakeCustom:
 def config(**spec):
     defaults = {
         "resourceQuotaName": "quota-warden",
-        "baseName": "default",
         "dryRun": False,
         "foreignResourceQuotas": "report",
         "onUnmanage": "delete",
@@ -351,11 +350,26 @@ def test_targeted_clears_once_the_namespace_is_managed():
     assert core.quotas["a", "quota-warden"].spec.hard == {"cpu": "1"}
 
 
-def test_base_is_read_by_base_name():
-    custom = FakeCustom(config(managedNamespaces=SELECTOR, baseName="other"), base(cpu="1"))
-    core = FakeCore([namespace("a")], {("a", "quota-warden"): quota({"cpu": "1"})})
+def test_the_base_is_whichever_quotabase_exists():
+    custom = FakeCustom(config(managedNamespaces=SELECTOR), base(name="anything", cpu="1"))
+    core = FakeCore([namespace("a")])
     run_once(core, custom, "default")
-    assert core.quotas == {}
+    assert core.quotas["a", "quota-warden"].spec.hard == {"cpu": "1"}
+
+
+def test_two_bases_touch_nothing_and_set_a_condition():
+    custom = FakeCustom(
+        config(managedNamespaces=SELECTOR),
+        base(name="one", cpu="1"),
+        base(name="two", cpu="2"),
+    )
+    core = FakeCore([namespace("a")], {("a", "quota-warden"): quota({"cpu": "1"})})
+    events = run_once(core, custom, "default")
+    assert core.writes == []
+    assert core.quotas["a", "quota-warden"].spec.hard == {"cpu": "1"}
+    condition = custom.conditions("quotawardenconfigs", "default")["Ready"]
+    assert condition[0] == "False" and "one, two" in condition[1]
+    assert [(e.type, e.reason) for e in events] == [("Warning", "BaseError")]
 
 
 def test_dry_run_reports_each_pending_change_once():
@@ -422,7 +436,7 @@ def test_standing_config_error_logs_once_then_debug(caplog):
     run_once(FakeCore([]), custom, "default", state)
     infos = [r.message for r in caplog.records if r.levelno == logging.INFO]
     assert "config 'default' loaded" in infos
-    assert "QuotaBase 'default' not found" in infos
+    assert "no QuotaBase; no defaults" in infos
 
 
 class Stopped:

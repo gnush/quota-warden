@@ -64,6 +64,14 @@ def list_objects(custom, plural: str) -> list[dict]:
     return custom.list_cluster_custom_object(GROUP, VERSION, plural)["items"]
 
 
+def base_of(bases: list[dict]) -> tuple[dict | None, str]:
+    """The one QuotaBase, or None and why. A singleton, so two is a configuration error."""
+    if len(bases) > 1:
+        names = ", ".join(sorted(b["metadata"]["name"] for b in bases))
+        return None, f"{len(bases)} QuotaBase objects ({names}); there must be at most one"
+    return (bases[0], "") if bases else (None, "")
+
+
 def sweep(
     core,
     base: dict | None,

@@ -1,5 +1,5 @@
 ---
-# Cluster-scoped singleton.
+# Cluster-scoped singleton: whichever QuotaBase exists is the base.
 apiVersion: quota-warden.gnush.github.io/v1alpha1
 kind: QuotaBase
 metadata:

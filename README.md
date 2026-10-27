@@ -145,7 +145,6 @@ Which config is read is `QUOTA_WARDEN_CONFIG` (see [Running](#running)).
 | `managedNamespaces`     | unset          | label selector over Namespaces; unset manages nothing, `{}` everything      |
 | `protectedNamespaces`   | `[]`           | never managed, on top of `kube-system`, `kube-public` and `kube-node-lease` |
 | `resourceQuotaName`     | `quota-warden` | the ResourceQuota written                                                   |
-| `baseName`              | `default`      | the `QuotaBase` to read                                                     |
 | `dryRun`                | `false`        | report what would change; write and delete nothing                          |
 | `foreignResourceQuotas` | `report`       | see [Sources](#sources)                                                     |
 | `onUnmanage`            | `delete`       | see [Sources](#sources)                                                     |
@@ -161,7 +160,7 @@ Examples: `cluster/fixtures/quota-{base,override,extension}.yaml`.
 
 | Kind             | Applies to                                                     | Per key                          |
 |------------------|----------------------------------------------------------------|----------------------------------|
-| `QuotaBase`      | every managed namespace; the one named by `baseName`           | the default                      |
+| `QuotaBase`      | every managed namespace; the one `QuotaBase` object            | the default                      |
 | `QuotaOverride`  | `spec.namespace`, which must equal its name: one per namespace | replaces the base                |
 | `QuotaExtension` | `spec.namespace`, through `expirationDate` (UTC)               | added on top of base or override |
 
@@ -169,6 +168,11 @@ A key no source sets is absent from the quota; an empty merge removes the quota.
 A source aimed at an unmanaged, protected or missing namespace is inert
 (`Targeted=False`). An invalid or negative value drops that key only
 (`Valid=False`).
+
+`QuotaBase` is a singleton: the operator reads whichever one exists, and one
+cluster-wide base serves every managed namespace. Two of them is a configuration
+error — nothing is touched and the config reports `Ready=False/BaseError`. No
+base at all means no defaults; overrides and extensions still apply.
 
 Expired `QuotaExtension`s are deleted by the operator, whatever namespace they
 target; under `dryRun` they are only reported.

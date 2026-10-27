@@ -21,7 +21,7 @@ from .conditions import Condition, Event, update
 from .config import ConfigError, config_name, load, resync_interval
 from .merge import expires_at
 from .quantity import format_quantity
-from .reconcile import GROUP, expired, list_objects, read_object, reap, sweep
+from .reconcile import GROUP, base_of, expired, list_objects, read_object, reap, sweep
 
 logger = logging.getLogger(__name__)
 
@@ -81,13 +81,21 @@ def run_once(
         "config", logging.INFO, f"config {name!r} loaded" + (", dry run" if config.dry_run else "")
     )
 
-    base = read_object(custom, "quotabases", config.base_name)
+    bases = list_objects(custom, "quotabases")
+    base, base_error = base_of(bases)
+    if base_error:
+        state.log("base", logging.ERROR, f"{base_error}; touching no namespace")
+        # the bases are not read, so only the config can carry the report
+        return update(
+            custom,
+            "quotawardenconfigs",
+            body,
+            [Condition("Ready", "False", "BaseError", base_error)],
+        )
     state.log(
         "base",
         logging.INFO,
-        f"QuotaBase {config.base_name!r} found"
-        if base
-        else f"QuotaBase {config.base_name!r} not found",
+        f"QuotaBase {base['metadata']['name']!r} found" if base else "no QuotaBase; no defaults",
     )
     overrides = list_objects(custom, "quotaoverrides")
     extensions = list_objects(custom, "quotaextensions")

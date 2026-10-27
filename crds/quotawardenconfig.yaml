@@ -52,9 +52,6 @@ spec:
                 resourceQuotaName:
                   type: string
                   default: quota-warden
-                baseName:
-                  type: string
-                  default: default
                 dryRun:
                   type: boolean
                   default: false
