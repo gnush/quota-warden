@@ -47,4 +47,4 @@ spec:
               value: --verbose
 ```
 
-The patch is the same one as the README overlay, in Application form.
+Both are fields of the `source` above; the patch is the README overlay's, inline.
