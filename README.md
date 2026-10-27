@@ -54,7 +54,6 @@ deployment: `deploy/config.yaml` is an example with `dryRun: true`, not part of
 the kustomization. Apply it once the selector matches what you intend.
 
 Overlays are for what differs per cluster; the image is `kustomize edit set image`.
-With Flux: [docs/flux.md](docs/flux.md). Fleet: [docs/fleet.md](docs/fleet.md).
 
 Log flags are kopf's (see [Running](#running)), appended to the image's
 ENTRYPOINT, so the base passes none: INFO, default format. Per-cluster flags
@@ -79,6 +78,17 @@ Against the kind cluster, built from the working tree and loaded into the node:
 make -f cluster/Makefile deploy      # build, load, apply, wait for rollout
 make -f cluster/Makefile undeploy    # deploy/ only; CRDs and sources stay
 ```
+
+## GitOps
+
+The repo root is a kustomize base, so each controller installs it from the tag
+with `path: .`. What they can override without vendoring the manifests differs:
+
+| Tool                    | Image                         | Log flags                                  |
+|-------------------------|-------------------------------|--------------------------------------------|
+| [Flux](docs/flux.md)    | `spec.images`                 | `spec.patches`                             |
+| [Argo CD](docs/argo.md) | `source.kustomize.images`     | `source.kustomize.patches`                 |
+| [Fleet](docs/fleet.md)  | copy `deploy/deployment.yaml` | `fleet.yaml` with your own `kustomize.dir` |
 
 ## Configuration
 
