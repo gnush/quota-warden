@@ -1,5 +1,16 @@
 # Quota Warden
 
+[![image](https://github.com/gnush/quota-warden/actions/workflows/image.yml/badge.svg)](https://github.com/gnush/quota-warden/actions/workflows/image.yml)
+
+
+A Kubernetes operator that writes one ResourceQuota per managed namespace,
+merged from three cluster-scoped sources: a `QuotaBase`, a per-namespace
+`QuotaOverride`, and `QuotaExtension`s that expire on a date. A ResourceQuota
+without the operator's managed-by label is reported rather than overwritten.
+
+Built on [kopf](https://kopf.readthedocs.io/). Requires a `QuotaWardenConfig`
+before it manages anything — see [Sources](#sources).
+
 ## Running
 
 ```sh
