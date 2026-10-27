@@ -9,7 +9,7 @@ merged from three cluster-scoped sources: a `QuotaBase`, a per-namespace
 without the operator's managed-by label is reported rather than overwritten.
 
 Built on [kopf](https://kopf.readthedocs.io/). Requires a `QuotaWardenConfig`
-before it manages anything — see [Sources](#sources).
+before it manages anything — see [Configuration](#configuration).
 
 ## Running
 
@@ -28,10 +28,10 @@ including kopf's per-event lines, which are hidden otherwise.
 It does nothing until a `QuotaWardenConfig` exists, and touches no namespace
 while that config is missing or invalid.
 
-| Env var | Default | |
-|---|---|---|
-| `QUOTA_WARDEN_CONFIG` | `default` | name of the `QuotaWardenConfig` to read |
-| `QUOTA_WARDEN_RESYNC_INTERVAL` | `1h` | full sweep without a triggering event; `<n>s`, `<n>m` or `<n>h`; read at startup. An expiry takes effect at most this late. |
+| Env var                        | Default   |                                                                                                                             |
+|--------------------------------|-----------|-----------------------------------------------------------------------------------------------------------------------------|
+| `QUOTA_WARDEN_CONFIG`          | `default` | name of the `QuotaWardenConfig` to read                                                                                     |
+| `QUOTA_WARDEN_RESYNC_INTERVAL` | `1h`      | full sweep without a triggering event; `<n>s`, `<n>m` or `<n>h`; read at startup. An expiry takes effect at most this late. |
 
 ## Deploying
 
@@ -63,16 +63,39 @@ make -f cluster/Makefile deploy      # build, load, apply, wait for rollout
 make -f cluster/Makefile undeploy    # deploy/ only; CRDs and sources stay
 ```
 
+## Configuration
+
+One cluster-scoped `QuotaWardenConfig` drives the operator:
+whichnamespaces are managed, which quota is written and whether it is written at all.
+Editing it triggers a sweep. A missing or invalid config touches no namespace:
+the operator logs `ConfigError` and, when the object exists, sets `Ready=False`.
+Which config is read is `QUOTA_WARDEN_CONFIG` (see [Running](#running)).
+`deploy/config.yaml` is a worked example.
+
+| Field                   | Default        |                                                                             |
+|-------------------------|----------------|-----------------------------------------------------------------------------|
+| `managedNamespaces`     | unset          | label selector over Namespaces; unset manages nothing, `{}` everything      |
+| `protectedNamespaces`   | `[]`           | never managed, on top of `kube-system`, `kube-public` and `kube-node-lease` |
+| `resourceQuotaName`     | `quota-warden` | the ResourceQuota written, and the name a foreign one blocks                |
+| `baseName`              | `default`      | the `QuotaBase` to read                                                     |
+| `dryRun`                | `false`        | report what would change; write and delete nothing                          |
+| `foreignResourceQuotas` | `report`       | see [Sources](#sources)                                                     |
+| `onUnmanage`            | `delete`       | see [Sources](#sources)                                                     |
+
+The selector takes `matchLabels` and `matchExpressions` with `In`, `NotIn`,
+`Exists` and `DoesNotExist`, as in a NetworkPolicy. A malformed expression is
+stored and surfaces as `Ready=False`, rather than being rejected by the CRD.
+
 ## Sources
 
 One ResourceQuota per managed namespace, merged from three cluster-scoped kinds.
 Examples: `cluster/fixtures/quota-{base,override,extension}.yaml`.
 
-| Kind | Applies to | Per key |
-|---|---|---|
-| `QuotaBase` | every managed namespace; the one named by `baseName` | the default |
-| `QuotaOverride` | `spec.namespace`, which must equal its name: one per namespace | replaces the base |
-| `QuotaExtension` | `spec.namespace`, through `expirationDate` (UTC) | added on top of base or override |
+| Kind             | Applies to                                                     | Per key                          |
+|------------------|----------------------------------------------------------------|----------------------------------|
+| `QuotaBase`      | every managed namespace; the one named by `baseName`           | the default                      |
+| `QuotaOverride`  | `spec.namespace`, which must equal its name: one per namespace | replaces the base                |
+| `QuotaExtension` | `spec.namespace`, through `expirationDate` (UTC)               | added on top of base or override |
 
 A key no source sets is absent from the quota; an empty merge removes the quota.
 A source aimed at an unmanaged, protected or missing namespace is inert
@@ -86,11 +109,11 @@ A ResourceQuota in a managed namespace without the
 `app.kubernetes.io/managed-by: quota-warden` label is foreign: it still binds by
 min(). `foreignResourceQuotas` decides what happens:
 
-| Value | Effect |
-|---|---|
+| Value              | Effect                                                            |
+|--------------------|-------------------------------------------------------------------|
 | `report` (default) | `Exclusive=False` on the config, a Warning Event on the Namespace |
-| `delete` | deleted; under `dryRun` only reported |
-| `ignore` | nothing |
+| `delete`           | deleted; under `dryRun` only reported                             |
+| `ignore`           | nothing                                                           |
 
 A foreign quota named `resourceQuotaName` blocks the namespace outside `delete`:
 nothing is written there, and its sources get `Applied=False` (`Blocked`).
@@ -109,12 +132,12 @@ the sources that set it. Every write and delete is an Event on the quota
 
 Requirements:
 
-| Need | For | Verified against |
-|---|---|---|
-| Python ≥ 3.11 | the operator and the e2e suite | 3.15.0 |
-| Docker, running | `kind create cluster` | 29.9.2 |
-| `kind` | the e2e cluster | v0.33.0 |
-| `kubectl` | fixtures, context handling | v1.37.1 |
+| Need            | For                            | Verified against |
+|-----------------|--------------------------------|------------------|
+| Python ≥ 3.11   | the operator and the e2e suite | 3.15.0           |
+| Docker, running | `kind create cluster`          | 29.9.2           |
+| `kind`          | the e2e cluster                | v0.33.0          |
+| `kubectl`       | fixtures, context handling     | v1.37.1          |
 
 One-time setup:
 
