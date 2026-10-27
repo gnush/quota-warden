@@ -196,6 +196,35 @@ The quota's `quota-warden.gnush.github.io/provenance` annotation maps each key t
 the sources that set it. Every write and delete is an Event on the quota
 (`kubectl describe resourcequota quota-warden -n <ns>`) naming the keys that changed.
 
+## kubectl plugin
+
+`plugin/bin/` holds `kubectl-quotaextension-*` scripts; symlinked into a
+directory on `PATH`, `kubectl quotaextension <verb>` dispatches to them:
+
+```sh
+mkdir -p ~/.local/bin
+ln -s "$PWD"/plugin/bin/* ~/.local/bin/
+```
+
+kubectl looks for the files directly in a `PATH` directory, so the directory
+itself cannot be linked. The scripts resolve their own symlink to find
+`plugin/lib/`, so a link into the checkout is enough.
+
+```sh
+kubectl quotaextension create -n alice -e 2026-11-08 cpu=8 requests.nvidia.com/gpu=1
+kubectl quotaextension list [-n alice]
+kubectl quotaextension edit alice-ext-1
+kubectl quotaextension delete alice-ext-1
+```
+
+`list` shows the operator's verdict per extension in `STATUS`, taken from the
+`Applied` condition; `-` means no sweep has seen it yet. Keys offered by `create`
+come from `~/.config/kubectl-quotaextension/resources`, one per line, if that
+file exists; any key the operator accepts works regardless.
+
+Shell completion works through kubectl's own plugin completion once the scripts
+are on `PATH`; no extra setup.
+
 ## Tests
 
 Requirements:

@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+#
+# kubectl-quotaextension-edit
+
+# Resolve a symlink to this script, so ../lib is found when a single command is
+# linked into a bin directory rather than bin/ as a whole.
+SOURCE="${BASH_SOURCE[0]}"
+count=0
+while [ -L "$SOURCE" ]; do
+    ((count++))
+    if ((count > 20)); then
+        echo "Too many symlink levels" >&2
+        exit 1
+    fi
+    DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+    SOURCE="$(readlink "$SOURCE")"
+    [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+
+source "$SCRIPT_DIR/../lib/quotaextension-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: kubectl quotaextension edit NAME
+
+Open one QuotaExtension in $EDITOR, as `kubectl edit` does. The operator picks
+the change up on the next sweep, so the quota follows within seconds.
+
+  -h, --help  this text
+
+--context, --kubeconfig and --request-timeout are passed through to kubectl.
+EOF
+}
+
+parse_global_flags "$@"
+set -- "${REMAINING[@]}"
+
+NAME=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    -*) echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
+    *)
+      [[ -z "$NAME" ]] || die "one name at a time; got '$NAME' and '$1'"
+      NAME="$1"
+      shift
+      ;;
+  esac
+done
+
+[[ -n "$NAME" ]] || { echo "Error: NAME is required" >&2; usage >&2; exit 1; }
+
+kubectl "${KUBECTL_ARGS[@]}" edit quotaextension "$NAME"

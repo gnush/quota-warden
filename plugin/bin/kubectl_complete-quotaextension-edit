@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+#
+# kubectl_complete-quotaextension-edit
+
+SOURCE="${BASH_SOURCE[0]}"
+count=0
+while [ -L "$SOURCE" ]; do
+    ((count++))
+    if ((count > 20)); then
+        echo "Too many symlink levels" >&2
+        exit 1
+    fi
+    DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+    SOURCE="$(readlink "$SOURCE")"
+    [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+
+source "$SCRIPT_DIR/../lib/quotaextension-lib.sh"
+source "$SCRIPT_DIR/../lib/completions-lib.sh"
+
+for arg in "$@"; do
+  case "$arg" in
+    -h|--help)
+      echo ":4"
+      exit 0
+      ;;
+    -*) ;;
+    *) complete_extension_names; echo ":4"; exit 0 ;;
+  esac
+done
+
+complete_extension_names
+cat <<'EOF'
+-h	Show help
+--help	Show help
+EOF
+echo ":36"

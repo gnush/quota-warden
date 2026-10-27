@@ -45,6 +45,13 @@ extension_names() {
     -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null
 }
 
+# One tab-separated row per extension: name, namespace, expirationDate, and the
+# reason of the Applied condition — the operator's one-line verdict. Empty until
+# the first sweep has written conditions.
+extension_rows() {
+  kubectl "${KUBECTL_ARGS[@]}" get "$PLURAL" -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.namespace}{"\t"}{.spec.expirationDate}{"\t"}{range .status.conditions[?(@.type=="Applied")]}{.reason}{end}{"\n"}{end}' 2>/dev/null
+}
+
 namespace_exists() {
   kubectl "${KUBECTL_ARGS[@]}" get namespace "$1" >/dev/null 2>&1
 }

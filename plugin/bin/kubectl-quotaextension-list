@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+#
+# kubectl-quotaextension-list
+
+# Resolve a symlink to this script, so ../lib is found when a single command is
+# linked into a bin directory rather than bin/ as a whole.
+SOURCE="${BASH_SOURCE[0]}"
+count=0
+while [ -L "$SOURCE" ]; do
+    ((count++))
+    if ((count > 20)); then
+        echo "Too many symlink levels" >&2
+        exit 1
+    fi
+    DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+    SOURCE="$(readlink "$SOURCE")"
+    [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+
+source "$SCRIPT_DIR/../lib/quotaextension-lib.sh"
+
+usage() {
+  cat <<EOF
+Usage: kubectl quotaextension list [-n NAMESPACE]
+
+One line per QuotaExtension: its namespace, the last day it is active, and the
+operator's verdict in STATUS (Applied, DryRun, Expired, Rejected, Blocked,
+NotTargeted). Where the operator has not looked yet, STATUS is -.
+
+  -n, --namespace NAMESPACE  only extensions for this namespace
+  -h, --help                 this text
+
+--context, --kubeconfig and --request-timeout are passed through to kubectl.
+
+The resources an extension adds, and every condition with its message, are in
+\`kubectl describe quotaextension NAME\`.
+EOF
+}
+
+NAMESPACE=""
+
+parse_global_flags "$@"
+set -- "${REMAINING[@]}"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -n|--namespace) NAMESPACE="${2:-}"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    -*) echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
+    *) die "unexpected argument '$1'; list takes no positional arguments" ;;
+  esac
+done
+
+tab=$'\t'
+
+ROWS="$(extension_rows)"
+if [[ -n "$NAMESPACE" ]]; then
+  ROWS="$(printf '%s\n' "$ROWS" | awk -F'\t' -v ns="$NAMESPACE" '$2 == ns')"
+fi
+# An empty listing is an empty string, which is one empty line here.
+ROWS="$(printf '%s\n' "$ROWS" | grep -v '^$')"
+
+if [[ -z "$ROWS" ]]; then
+  if [[ -n "$NAMESPACE" ]]; then
+    echo "No QuotaExtensions for namespace '$NAMESPACE'"
+  else
+    echo "No QuotaExtensions"
+  fi
+  exit 0
+fi
+
+{
+  printf 'NAME\tNAMESPACE\tEXPIRES\tSTATUS\n'
+  printf '%s\n' "$ROWS" \
+    | sort -t "$tab" -k2,2 -k1,1 \
+    | awk -F'\t' 'BEGIN {OFS="\t"} {if ($4 == "") $4 = "-"; print}'
+} | column -t -s "$tab"

@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+#
+# kubectl_complete-quotaextension
+
+# kubectl offers the plugin subcommands itself, but without descriptions; this
+# adds them. Arguments are the words after the verb.
+cat <<'EOF'
+create	Add an extension
+edit	Edit one in $EDITOR
+list	List them
+delete	Delete them
+EOF
+echo ":4"

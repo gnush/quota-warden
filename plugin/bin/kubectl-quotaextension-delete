@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+#
+# kubectl-quotaextension-delete
+
+# Resolve a symlink to this script, so ../lib is found when a single command is
+# linked into a bin directory rather than bin/ as a whole.
+SOURCE="${BASH_SOURCE[0]}"
+count=0
+while [ -L "$SOURCE" ]; do
+    ((count++))
+    if ((count > 20)); then
+        echo "Too many symlink levels" >&2
+        exit 1
+    fi
+    DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+    SOURCE="$(readlink "$SOURCE")"
+    [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+
+source "$SCRIPT_DIR/../lib/quotaextension-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: kubectl quotaextension delete NAME... [-y]
+
+Delete QuotaExtensions. The quota shrinks on the next sweep. Expired ones the
+operator has not reaped yet can be removed the same way.
+
+  -y, --yes   do not ask
+  -h, --help  this text
+
+--context, --kubeconfig and --request-timeout are passed through to kubectl.
+EOF
+}
+
+ASSUME_YES=""
+NAMES=()
+
+parse_global_flags "$@"
+set -- "${REMAINING[@]}"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -y|--yes) ASSUME_YES=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    -*) echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
+    *) NAMES+=("$1"); shift ;;
+  esac
+done
+
+[[ ${#NAMES[@]} -gt 0 ]] || { echo "Error: at least one NAME is required" >&2; usage >&2; exit 1; }
+
+if [[ -z "$ASSUME_YES" ]]; then
+  printf 'Delete %s? [y/N] ' "${NAMES[*]}"
+  read -r answer
+  case "$answer" in
+    y|Y|yes|YES) ;;
+    *) echo "cancelled"; exit 1 ;;
+  esac
+fi
+
+kubectl "${KUBECTL_ARGS[@]}" delete quotaextension "${NAMES[@]}"
