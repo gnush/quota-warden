@@ -216,7 +216,13 @@ def test_two_replicas_write_once_between_them(api, custom, operator):
         time.sleep(20)
         output = replica_logs(api, since=operator)
         assert "peering priority" in output
-        assert "Pausing operations in favour of" in output, output
+        # not the "Pausing" log line: a replica that loses the draw starts paused
+        # and never logs it, only one that is outranked while running does
+        peers = client.CustomObjectsApi().get_cluster_custom_object(
+            "kopf.dev", "v1", "clusterkopfpeerings", "default"
+        )["status"]
+        live = [p for p in peers.values() if p.get("lifetime", 0) > 0]
+        assert len({p["priority"] for p in live}) == 2, peers
 
         uid = api.read_namespaced_resource_quota(QUOTA, TARGET).metadata.uid
         before = uids(applied_events(api, TARGET, uid))
