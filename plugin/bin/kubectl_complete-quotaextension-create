@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+#
+# kubectl_complete-quotaextension-create
+
+SOURCE="${BASH_SOURCE[0]}"
+count=0
+while [ -L "$SOURCE" ]; do
+    ((count++))
+    if ((count > 20)); then
+        echo "Too many symlink levels" >&2
+        exit 1
+    fi
+    DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+    SOURCE="$(readlink "$SOURCE")"
+    [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+
+source "$SCRIPT_DIR/../lib/quotaextension-lib.sh"
+source "$SCRIPT_DIR/../lib/completions-lib.sh"
+
+# The word before the one being completed; flags are looked at from the end so
+# the same script works whether kubectl passes the verb words or not.
+previous=""
+last=""
+for arg in "$@"; do
+    previous="$last"
+    last="$arg"
+done
+
+case "$previous" in
+  -n|--namespace)
+    complete_namespaces
+    echo ":4"
+    exit 0
+    ;;
+
+  -e|--expiration)
+    complete_expiration_dates
+    echo ":4"
+    exit 0
+    ;;
+
+  --name)
+    echo ":4"
+    exit 0
+    ;;
+esac
+
+complete_resource_keys
+cat <<'EOF'
+-n	Target namespace
+--namespace	Target namespace
+-e	Expiration date (YYYY-MM-DD)
+--expiration	Expiration date (YYYY-MM-DD)
+--name	Extension name
+-h	Show help
+--help	Show help
+EOF
+echo ":36"

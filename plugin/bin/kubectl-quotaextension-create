@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+#
+# kubectl-quotaextension-create
+
+# Resolve a symlink to this script, so ../lib is found when a single command is
+# linked into a bin directory rather than bin/ as a whole.
+SOURCE="${BASH_SOURCE[0]}"
+count=0
+while [ -L "$SOURCE" ]; do
+    ((count++))
+    if ((count > 20)); then
+        echo "Too many symlink levels" >&2
+        exit 1
+    fi
+    DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+    SOURCE="$(readlink "$SOURCE")"
+    [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+
+source "$SCRIPT_DIR/../lib/quotaextension-lib.sh"
+
+usage() {
+  cat <<EOF
+Usage: kubectl quotaextension create -n NAMESPACE -e YYYY-MM-DD KEY=VALUE...
+
+Add a QuotaExtension: resources added on top of the merged quota, for one
+namespace, until the end of the given day (UTC). The operator deletes the
+extension after that; nothing else removes it.
+
+  -n, --namespace NAMESPACE  namespace the extension applies to (required)
+  -e, --expiration DATE      last active day, YYYY-MM-DD (required)
+      --name NAME            extension name (default: NAMESPACE-ext-N)
+  -h, --help                 this text
+
+--context, --kubeconfig and --request-timeout are passed through to kubectl.
+
+Resources are key=value pairs of any key the operator accepts, e.g.
+
+  kubectl quotaextension create -n alice -e 2026-11-08 cpu=8 requests.nvidia.com/gpu=1
+
+Keys offered for completion:
+$(resource_keys | sed 's/^/  /')
+EOF
+}
+
+NAMESPACE=""
+EXPIRATION=""
+NAME=""
+PAIRS=()
+
+parse_global_flags "$@"
+set -- "${REMAINING[@]}"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -n|--namespace) NAMESPACE="${2:-}"; shift 2 ;;
+    -e|--expiration) EXPIRATION="${2:-}"; shift 2 ;;
+    --name) NAME="${2:-}"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    -*) echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
+    *) PAIRS+=("$1"); shift ;;
+  esac
+done
+
+[[ -n "$NAMESPACE" ]] || { echo "Error: -n is required" >&2; usage >&2; exit 1; }
+[[ -n "$EXPIRATION" ]] || { echo "Error: -e is required" >&2; usage >&2; exit 1; }
+valid_date "$EXPIRATION" || die "expiration '$EXPIRATION' is not YYYY-MM-DD"
+[[ ${#PAIRS[@]} -gt 0 ]] || die "no resources given; pass at least one KEY=VALUE"
+[[ -n "$NAME" ]] && ! valid_name "$NAME" && die "'$NAME' is not a valid object name"
+
+# The CRD requires the namespace to be non-empty, not to exist. Catching the
+# typo here is friendlier and costs one call.
+namespace_exists "$NAMESPACE" || die "namespace '$NAMESPACE' does not exist"
+
+KEYS=()
+VALUES=()
+SEEN=" "
+for pair in "${PAIRS[@]}"; do
+  [[ "$pair" == *=* ]] || die "'$pair' is not KEY=VALUE"
+  key="${pair%%=*}"
+  value="${pair#*=}"
+  valid_key "$key" || die "'$key' is not a resource key"
+  [[ -n "$value" ]] || die "'$key' has no value"
+  # The merge sums, so a second value for one key would silently pick one
+  [[ "$SEEN" == *" $key "* ]] && die "'$key' given twice"
+  SEEN+="$key "
+  KEYS+=("$key")
+  VALUES+=("$value")
+done
+
+[[ -n "$NAME" ]] && ! valid_name "$NAME" && die "'$NAME' is not a valid object name"
+
+# The CR's name is cluster-wide, so the number is unique across namespaces, not
+# within one. Listing and picking the lowest free name can race with another
+# caller; the apply below then fails with 409 and says so.
+if [[ -z "$NAME" ]]; then
+  EXISTING=" $(extension_names | tr '\n' ' ')"
+  n=1
+  while [[ "$EXISTING" == *" ${NAMESPACE}-ext-${n} "* ]]; do
+    n=$((n + 1))
+  done
+  NAME="${NAMESPACE}-ext-${n}"
+fi
+
+# resources is x-kubernetes-int-or-string, so a quoted value is accepted as is;
+# `8` stays `8` rather than becoming a YAML number the API would also take.
+MANIFEST="apiVersion: $GROUP/$VERSION
+kind: QuotaExtension
+metadata:
+  name: $NAME
+spec:
+  namespace: $NAMESPACE
+  expirationDate: \"$EXPIRATION\"
+  resources:"
+for i in "${!KEYS[@]}"; do
+  MANIFEST+=$'\n'"    ${KEYS[$i]}: \"${VALUES[$i]}\""
+done
+
+printf '%s\n' "$MANIFEST" | kubectl "${KUBECTL_ARGS[@]}" apply -f - || exit $?
+
+echo "QuotaExtension '$NAME' created for namespace '$NAMESPACE', active through $EXPIRATION"
