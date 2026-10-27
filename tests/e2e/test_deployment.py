@@ -125,6 +125,16 @@ def logs(api, since=None):
     return api.read_namespaced_pod_log(pod(api).metadata.name, NAMESPACE, **kwargs)
 
 
+def replica_logs(api, since=None):
+    """Every replica's log, one string: `logs()` reads a single pod, and peering runs two."""
+    kwargs = {}
+    if since:
+        kwargs["since_seconds"] = int((datetime.now(UTC) - since).total_seconds()) + 1
+    return "\n".join(
+        api.read_namespaced_pod_log(p.metadata.name, NAMESPACE, **kwargs) for p in running_pods(api)
+    )
+
+
 def events(api, namespace, kind, uid, reason):
     """Events on one object, by uid: Events outlive the object and the run."""
     selector = f"involvedObject.kind={kind},involvedObject.uid={uid},reason={reason}"
@@ -176,6 +186,12 @@ def test_both_probes_point_at_the_liveness_endpoint(api, operator):
     assert pod(api).status.container_statuses[0].ready
 
 
+def applied_events(api, namespace, uid):
+    """`Applied` Events on one quota, by uid: the operator posts one per write it makes."""
+    selector = f"involvedObject.kind=ResourceQuota,involvedObject.uid={uid},reason=Applied"
+    return api.list_namespaced_event(namespace, field_selector=selector).items
+
+
 def test_the_deployment_defaults_to_one_replica(api, operator):
     # raisable: peering lets only the highest priority sweep. See README, Replicas.
     scale = client.AppsV1Api().read_namespaced_deployment_scale(DEPLOYMENT, NAMESPACE)
@@ -190,22 +206,29 @@ def test_the_operator_holds_the_peering_object(api, operator):
     assert peering["status"], peering
 
 
-def test_a_second_replica_pauses_instead_of_sweeping(api, operator):
-    """Scaling up is supported: the loser stands down rather than double-sweeping."""
+def test_two_replicas_write_once_between_them(api, custom, operator):
+    """The point of peering: a change reaches the quota once, not once per replica."""
     apps = client.AppsV1Api()
     try:
         apps.patch_namespaced_deployment_scale(DEPLOYMENT, NAMESPACE, {"spec": {"replicas": 2}})
         wait_for(lambda: len(running_pods(api)) == 2, timeout=120)
+        # both replicas have read the listing and settled into their ranks
         time.sleep(20)
-        # both replicas' logs: `logs()` reads one pod, and there are two now
-        output = "\n".join(
-            api.read_namespaced_pod_log(p.metadata.name, NAMESPACE, since_seconds=300)
-            for p in running_pods(api)
-        )
+        output = replica_logs(api, since=operator)
         assert "peering priority" in output
-        # both draw a priority; one of the two is told to stand down
         assert "Pausing operations in favour of" in output, output
+
+        uid = api.read_namespaced_resource_quota(QUOTA, TARGET).metadata.uid
+        before = uids(applied_events(api, TARGET, uid))
+        set_base(custom, cpu="7", memory="1Gi")
+        assert wait_for(lambda: hard(api) == q(cpu="7", memory="1Gi")), hard(api)
+        # the write settles before anything else counts it
+        time.sleep(10)
+        written = [e for e in applied_events(api, TARGET, uid) if e.metadata.uid not in before]
+        assert len(written) == 1, [e.message for e in written]
     finally:
+        set_base(custom, cpu="2", memory="1Gi")
+        wait_for(lambda: hard(api) == q(cpu="2", memory="1Gi"))
         apps.patch_namespaced_deployment_scale(DEPLOYMENT, NAMESPACE, {"spec": {"replicas": 1}})
         wait_for(lambda: len(running_pods(api)) == 1, timeout=120)
 
