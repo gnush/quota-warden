@@ -81,8 +81,9 @@ make -f cluster/Makefile undeploy    # deploy/ only; CRDs and sources stay
 
 ## GitOps
 
-The repo root is a kustomize base, so each controller installs it from the tag
-with `path: .`. What they can override without vendoring the manifests differs:
+The repo root is a kustomize base, pinned by release tag. Flux and Argo CD build
+it with `path: .`; Fleet cannot, and lists `crds` and `deploy` instead. What they
+can override without vendoring the manifests differs:
 
 | Tool                    | Image                         | Log flags                                  |
 |-------------------------|-------------------------------|--------------------------------------------|
