@@ -142,8 +142,13 @@ COLUMNS = {
         ["NAME", "NAMESPACE", "CPU", "MEMORY", "VALID", "APPLIED", "AGE", "ALL"],
     ),
     "quotaextensions": (
-        {"e2e-columns": {"namespace": "quota-user-a", "expirationDate": "2026-11-08",
-                         "resources": {"cpu": "2"}}},
+        {
+            "e2e-columns": {
+                "namespace": "quota-user-a",
+                "expirationDate": "2026-11-08",
+                "resources": {"cpu": "2"},
+            }
+        },
         ["NAME", "NAMESPACE", "EXPIRES", "CPU", "MEMORY", "VALID", "STATUS", "AGE", "ALL"],
     ),
     "quotawardenconfigs": (
@@ -169,12 +174,21 @@ def test_printer_columns(create, plural):
 
 
 def test_the_all_column_shows_keys_no_other_column_names(create):
-    spec = {"namespace": "quota-user-a", "expirationDate": "2026-11-08",
-            "resources": {"requests.nvidia.com/gpu": "8"}}
+    spec = {
+        "namespace": "quota-user-a",
+        "expirationDate": "2026-11-08",
+        "resources": {"requests.nvidia.com/gpu": "8"},
+    }
     create("quotaextensions", "e2e-extension-columns", spec)
     row = subprocess.run(
-        ["kubectl", "--context", os.environ["E2E_CONTEXT"], "get", "quotaextensions",
-         "e2e-extension-columns"],
+        [
+            "kubectl",
+            "--context",
+            os.environ["E2E_CONTEXT"],
+            "get",
+            "quotaextensions",
+            "e2e-extension-columns",
+        ],
         check=True,
         capture_output=True,
         text=True,
