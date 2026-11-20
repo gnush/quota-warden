@@ -495,6 +495,7 @@ async def startup(settings: kopf.OperatorSettings, memo: kopf.Memo, **_):
         for e in await asyncio.to_thread(run_once, core, custom, memo.namespace, state=state):
             kopf.event(e.body, type=e.type, reason=e.reason, message=e.message)
 
+    memo.custom = custom
     memo.sweeper = Sweeper(run, interval.total_seconds())
     memo.quotas = {}
 
@@ -571,6 +572,28 @@ async def quota_event(memo: kopf.Memo, body, type, **_):
 def own_namespace(namespace, memo: kopf.Memo, **_) -> bool:
     """kopf filter: the sources are watched cluster-wide, but only the operator's count."""
     return namespace == memo.namespace
+
+
+def stray(custom, plural: str, body, namespace: str) -> list[Event]:
+    """Mark a source outside the operator namespace as ignored; Events for the transition."""
+    message = f"sources are read from namespace {namespace!r} only; this object is ignored"
+    return update(custom, plural, body, [Condition("Applied", "False", "WrongNamespace", message)])
+
+
+def _elsewhere(**kwargs) -> bool:
+    return not own_namespace(**kwargs)
+
+
+@kopf.on.event(GROUP, "quotaoverrides", when=_elsewhere)
+@kopf.on.event(GROUP, "quotaextensions", when=_elsewhere)
+@kopf.on.event(GROUP, "quotawardenconfigs", when=_elsewhere)
+async def stray_event(memo: kopf.Memo, resource, body, type, **_):
+    if type == "DELETED":
+        return
+    # our own status patch comes back as an event; update() then finds nothing to write
+    events = await asyncio.to_thread(stray, memo.custom, resource.plural, body, memo.namespace)
+    for e in events:
+        kopf.event(e.body, type=e.type, reason=e.reason, message=e.message)
 
 
 @kopf.on.event("namespaces")

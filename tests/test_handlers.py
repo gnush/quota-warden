@@ -7,7 +7,7 @@ import pytest
 from kubernetes.client.exceptions import ApiException
 from test_reconcile import OWNED, FakeCore, from_base, namespace, quota
 
-from quota_warden.handlers import State, Sweeper, own_namespace, quota_changed, run_once
+from quota_warden.handlers import State, Sweeper, own_namespace, quota_changed, run_once, stray
 
 SELECTOR = {"matchLabels": {"managed": "yes"}}
 WARDEN = "warden"  # the operator's namespace
@@ -1005,3 +1005,16 @@ def test_only_the_operator_namespace_passes_the_filter():
     memo = kopf.Memo(namespace=WARDEN)
     assert own_namespace(namespace=WARDEN, memo=memo)
     assert not own_namespace(namespace="a", memo=memo)
+
+
+def test_a_stray_source_is_marked_once():
+    o = override("a", "a", cpu="9")
+    o["metadata"]["namespace"] = "a"
+    custom = FakeCustom(o)
+    [event] = stray(custom, "quotaoverrides", o, WARDEN)
+    assert (event.type, event.reason) == ("Warning", "WrongNamespace")
+    status, message = custom.conditions("quotaoverrides", "a")["Applied"]
+    assert status == "False" and repr(WARDEN) in message
+    # the patch's own watch event comes back with the stored status
+    assert stray(custom, "quotaoverrides", custom.objects["quotaoverrides", "a"], WARDEN) == []
+    assert custom.patches == 1

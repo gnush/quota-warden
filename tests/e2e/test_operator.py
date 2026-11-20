@@ -220,6 +220,9 @@ def test_a_config_outside_the_operator_namespace_is_ignored(api, custom, base):
             GROUP, VERSION, NAMESPACE, "quotawardenconfigs", "e2e-stray"
         )
         assert not stray["metadata"].get("finalizers")
+        assert wait_for(lambda: applied_reason(custom, "quotawardenconfigs", "e2e-stray")) == (
+            "WrongNamespace"
+        )
     finally:
         delete(
             custom.delete_namespaced_custom_object,
@@ -228,6 +231,54 @@ def test_a_config_outside_the_operator_namespace_is_ignored(api, custom, base):
             NAMESPACE,
             "quotawardenconfigs",
             "e2e-stray",
+        )
+
+
+def applied_reason(custom, plural, name, namespace=NAMESPACE):
+    status = custom.get_namespaced_custom_object(GROUP, VERSION, namespace, plural, name)
+    for c in status.get("status", {}).get("conditions", []):
+        if c["type"] == "Applied":
+            return c["reason"]
+    return None
+
+
+def test_an_override_outside_the_operator_namespace_is_marked_and_ignored(api, custom, base):
+    label(api, MANAGED_LABEL[LABEL])
+    base(cpu="4")
+    wait_for(lambda: hard(api) == q(cpu="4"))
+    body = {
+        "apiVersion": f"{GROUP}/{VERSION}",
+        "kind": "QuotaOverride",
+        "metadata": {"name": NAMESPACE},
+        "spec": {"namespace": NAMESPACE, "resources": {"cpu": "9"}},
+    }
+    custom.create_namespaced_custom_object(GROUP, VERSION, NAMESPACE, "quotaoverrides", body)
+    try:
+        assert wait_for(lambda: applied_reason(custom, "quotaoverrides", NAMESPACE)) == (
+            "WrongNamespace"
+        )
+
+        def warnings():
+            return [
+                e.type
+                for e in api.list_namespaced_event(
+                    NAMESPACE,
+                    field_selector=f"involvedObject.name={NAMESPACE},reason=WrongNamespace",
+                ).items
+            ]
+
+        # posted after the status patch
+        assert wait_for(warnings) == ["Warning"]
+        time.sleep(2)
+        assert hard(api) == q(cpu="4")
+    finally:
+        delete(
+            custom.delete_namespaced_custom_object,
+            GROUP,
+            VERSION,
+            NAMESPACE,
+            "quotaoverrides",
+            NAMESPACE,
         )
 
 
