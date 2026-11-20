@@ -2,11 +2,12 @@ import asyncio
 import logging
 from datetime import UTC, datetime
 
+import kopf
 import pytest
 from kubernetes.client.exceptions import ApiException
 from test_reconcile import OWNED, FakeCore, from_base, namespace, quota
 
-from quota_warden.handlers import State, Sweeper, quota_changed, run_once
+from quota_warden.handlers import State, Sweeper, own_namespace, quota_changed, run_once
 
 SELECTOR = {"matchLabels": {"managed": "yes"}}
 WARDEN = "warden"  # the operator's namespace
@@ -998,3 +999,9 @@ def test_a_missing_peering_crd_is_reported(monkeypatch):
     with pytest.raises(kopf.PermanentError):
         configure_peering(Settings(), monkeypatch, status=404)
     assert handlers.PEERING_NAME == "default"
+
+
+def test_only_the_operator_namespace_passes_the_filter():
+    memo = kopf.Memo(namespace=WARDEN)
+    assert own_namespace(namespace=WARDEN, memo=memo)
+    assert not own_namespace(namespace="a", memo=memo)

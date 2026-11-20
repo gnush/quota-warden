@@ -568,10 +568,15 @@ async def quota_event(memo: kopf.Memo, body, type, **_):
         memo.sweeper.request()
 
 
+def own_namespace(namespace, memo: kopf.Memo, **_) -> bool:
+    """kopf filter: the sources are watched cluster-wide, but only the operator's count."""
+    return namespace == memo.namespace
+
+
 @kopf.on.event("namespaces")
-@kopf.on.event(GROUP, "quotaoverrides")
-@kopf.on.event(GROUP, "quotaextensions")
-@kopf.on.event(GROUP, "quotawardenconfigs")
+@kopf.on.event(GROUP, "quotaoverrides", when=own_namespace)
+@kopf.on.event(GROUP, "quotaextensions", when=own_namespace)
+@kopf.on.event(GROUP, "quotawardenconfigs", when=own_namespace)
 # Async: kopf runs sync handlers in threads, and asyncio.Event is not thread-safe.
 # Per-object memos are shallow copies, so state lives in the shared Sweeper.
 async def request_sweep(memo: kopf.Memo, **_):
@@ -590,6 +595,7 @@ def _no_filter(**_):
 # and the others wait to take over.
 # requires_finalizer leaves kopf's marker on that object; it is on the config,
 # not on every Namespace, and that is what makes the daemon's lifetime its own.
-@kopf.daemon(GROUP, "quotawardenconfigs")
+# The filter also keeps a config elsewhere from taking the sweep or getting the finalizer.
+@kopf.daemon(GROUP, "quotawardenconfigs", when=own_namespace)
 async def sweep_loop(stopped, memo: kopf.Memo, **_):
     await memo.sweeper.loop(stopped)

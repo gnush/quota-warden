@@ -202,6 +202,35 @@ def test_unmanaged_and_protected_namespaces_get_none(api, base):
     assert hard(api, "quota-protected") is None
 
 
+def test_a_config_outside_the_operator_namespace_is_ignored(api, custom, base):
+    label(api, MANAGED_LABEL[LABEL])
+    base(cpu="4")
+    wait_for(lambda: hard(api) == q(cpu="4"))
+    body = {
+        "apiVersion": f"{GROUP}/{VERSION}",
+        "kind": "QuotaWardenConfig",
+        "metadata": {"name": "e2e-stray"},
+        "spec": {"managedNamespaces": {}, "baseResources": {"cpu": "9"}},
+    }
+    custom.create_namespaced_custom_object(GROUP, VERSION, NAMESPACE, "quotawardenconfigs", body)
+    try:
+        base(cpu="6")
+        assert wait_for(lambda: hard(api) == q(cpu="6")), hard(api)
+        stray = custom.get_namespaced_custom_object(
+            GROUP, VERSION, NAMESPACE, "quotawardenconfigs", "e2e-stray"
+        )
+        assert not stray["metadata"].get("finalizers")
+    finally:
+        delete(
+            custom.delete_namespaced_custom_object,
+            GROUP,
+            VERSION,
+            NAMESPACE,
+            "quotawardenconfigs",
+            "e2e-stray",
+        )
+
+
 def test_editing_the_base_updates_the_quota(api, base):
     label(api, MANAGED_LABEL[LABEL])
     base(cpu="4")
