@@ -19,6 +19,9 @@ SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
 source "$SCRIPT_DIR/../lib/quotaextension-lib.sh"
 source "$SCRIPT_DIR/../lib/completions-lib.sh"
 
+parse_completion_args "$@"
+set -- "${WORDS[@]}"
+
 previous=""
 last=""
 for arg in "$@"; do

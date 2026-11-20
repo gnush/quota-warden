@@ -4,8 +4,25 @@
 # and this file, prints "<candidate>\t<description>" lines, then ":<n>" where n
 # is the index of the kubectl plugin protocol's word position.
 
+# kubectl passes the typed words with the one being completed last. Applies the
+# global flags already typed, so suggestions come from the cluster and operator
+# namespace the command would use, and sets WORDS to the rest. If the word
+# before the current one is a global flag, completes its value and exits.
+parse_completion_args() {
+  WORDS=()
+  [[ $# -gt 0 ]] || return 0
+  local current="${!#}" previous=""
+  [[ $# -ge 2 ]] && previous="${*: -2:1}"
+  case "$previous" in
+    --warden-namespace) complete_namespaces; echo ":4"; exit 0 ;;
+    --context|--kubeconfig|--request-timeout) echo ":4"; exit 0 ;;
+  esac
+  parse_global_flags "${@:1:$#-1}"
+  WORDS=("${REMAINING[@]}" "$current")
+}
+
 complete_namespaces() {
-  kubectl get namespaces \
+  kubectl "${KUBECTL_ARGS[@]}" get namespaces \
     -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null
 }
 
