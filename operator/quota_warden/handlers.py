@@ -607,10 +607,6 @@ async def request_sweep(memo: kopf.Memo, **_):
     memo.sweeper.request()
 
 
-def _no_filter(**_):
-    return True
-
-
 # A daemon, not a task beside startup: peering stops daemons on a pause, and a
 # paused replica must not keep resyncing -- that is the concurrent sweep that
 # peering exists to prevent. Its lifetime is a config object's, so creating the
