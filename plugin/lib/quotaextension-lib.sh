@@ -12,13 +12,17 @@ die() {
   exit 1
 }
 
+# Where the operator reads its sources; deploying it elsewhere needs one of these.
+WARDEN_NAMESPACE="${QUOTA_WARDEN_NAMESPACE:-quota-warden}"
+
 # kubectl hands its global flags to plugins, so these arrive unchanged; they are
 # forwarded to every kubectl call rather than parsed. An array, so a value with
 # spaces survives.
 KUBECTL_ARGS=()
 
-# Pull --context, --kubeconfig and --request-timeout out of the arguments. Sets
-# KUBECTL_ARGS and REMAINING to what is left for the command's own parser.
+# Pull --context, --kubeconfig, --request-timeout and --warden-namespace out of
+# the arguments. Sets KUBECTL_ARGS, WARDEN_NAMESPACE and REMAINING to what is
+# left for the command's own parser.
 parse_global_flags() {
   REMAINING=()
   while [[ $# -gt 0 ]]; do
@@ -32,6 +36,16 @@ parse_global_flags() {
         KUBECTL_ARGS+=("$1")
         shift
         ;;
+      --warden-namespace)
+        [[ $# -ge 2 && -n "$2" ]] || die "$1 needs a value"
+        WARDEN_NAMESPACE="$2"
+        shift 2
+        ;;
+      --warden-namespace=*)
+        WARDEN_NAMESPACE="${1#*=}"
+        [[ -n "$WARDEN_NAMESPACE" ]] || die "--warden-namespace needs a value"
+        shift
+        ;;
       *)
         REMAINING+=("$1")
         shift
@@ -40,8 +54,13 @@ parse_global_flags() {
   done
 }
 
+# kubectl against the operator namespace, for every call on an extension
+warden() {
+  kubectl "${KUBECTL_ARGS[@]}" -n "$WARDEN_NAMESPACE" "$@"
+}
+
 extension_names() {
-  kubectl "${KUBECTL_ARGS[@]}" get "$PLURAL" \
+  warden get "$PLURAL" \
     -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null
 }
 
@@ -49,7 +68,7 @@ extension_names() {
 # reason of the Applied condition — the operator's one-line verdict. Empty until
 # the first sweep has written conditions.
 extension_rows() {
-  kubectl "${KUBECTL_ARGS[@]}" get "$PLURAL" -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.namespace}{"\t"}{.spec.expirationDate}{"\t"}{range .status.conditions[?(@.type=="Applied")]}{.reason}{end}{"\n"}{end}' 2>/dev/null
+  warden get "$PLURAL" -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.namespace}{"\t"}{.spec.expirationDate}{"\t"}{range .status.conditions[?(@.type=="Applied")]}{.reason}{end}{"\n"}{end}' 2>/dev/null
 }
 
 namespace_exists() {

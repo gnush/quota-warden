@@ -31,6 +31,8 @@ operator has not reaped yet can be removed the same way.
   -h, --help  this text
 
 --context, --kubeconfig and --request-timeout are passed through to kubectl.
+--warden-namespace NAMESPACE is the operator's namespace, where extensions
+live (default: $QUOTA_WARDEN_NAMESPACE, else quota-warden).
 EOF
 }
 
@@ -60,4 +62,4 @@ if [[ -z "$ASSUME_YES" ]]; then
   esac
 fi
 
-kubectl "${KUBECTL_ARGS[@]}" delete quotaextension "${NAMES[@]}"
+warden delete quotaextension "${NAMES[@]}"

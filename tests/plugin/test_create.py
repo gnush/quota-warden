@@ -3,7 +3,7 @@
 import pytest
 
 
-def test_create_writes_a_cluster_scoped_extension(run):
+def test_create_writes_an_extension_to_the_operator_namespace(run):
     result = run(
         "kubectl-quotaextension-create",
         "-n",
@@ -24,6 +24,11 @@ def test_create_writes_a_cluster_scoped_extension(run):
             "resources": {"cpu": "8", "requests.nvidia.com/gpu": "1"},
         },
     }
+    # the name lookup and the apply; the target-namespace check is cluster-scoped
+    check, lookup, apply = result.args
+    assert lookup.startswith("-n quota-warden get quotaextensions ")
+    assert check == "get namespace alice"
+    assert apply == "-n quota-warden apply -f -"
 
 
 def test_create_numbers_names_around_existing_ones(run):

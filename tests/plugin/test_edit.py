@@ -6,7 +6,7 @@ import pytest
 def test_edit_opens_the_named_extension_in_the_editor(run):
     result = run("kubectl-quotaextension-edit", "alice-ext-1")
     assert result.returncode == 0, result.stderr
-    assert result.args == ["edit quotaextension alice-ext-1"]
+    assert result.args == ["-n quota-warden edit quotaextension alice-ext-1"]
 
 
 @pytest.mark.parametrize(
@@ -31,7 +31,7 @@ def test_edit_passes_global_flags_through(run):
         "kind-test",
         "alice-ext-1",
     )
-    assert result.args == ["--context kind-test edit quotaextension alice-ext-1"]
+    assert result.args == ["--context kind-test -n quota-warden edit quotaextension alice-ext-1"]
 
 
 def test_edit_fails_when_kubectl_does(run):

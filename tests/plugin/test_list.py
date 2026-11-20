@@ -69,7 +69,7 @@ def test_list_passes_global_flags_through(run):
         env={"STUB_ROWS": "alice-ext-1\talice\t2026-11-08\tApplied"},
     )
     assert result.returncode == 0, result.stderr
-    assert all("--context kind-test" in line for line in result.args)
+    assert all("--context kind-test -n quota-warden" in line for line in result.args)
 
 
 @pytest.mark.parametrize("args", [["alice"], ["-x"]])

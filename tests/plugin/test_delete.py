@@ -6,13 +6,13 @@ import pytest
 def test_delete_asks_then_deletes(run):
     result = run("kubectl-quotaextension-delete", "alice-ext-1", stdin="y\n")
     assert result.returncode == 0, result.stderr
-    assert result.args == ["delete quotaextension alice-ext-1"]
+    assert result.args == ["-n quota-warden delete quotaextension alice-ext-1"]
     assert "Delete alice-ext-1?" in result.stdout
 
 
 def test_delete_deletes_several_at_once(run):
     result = run("kubectl-quotaextension-delete", "-y", "a", "b")
-    assert result.args == ["delete quotaextension a b"]
+    assert result.args == ["-n quota-warden delete quotaextension a b"]
 
 
 @pytest.mark.parametrize("answer", ["", "n\n", "no\n", "yes please\n"])
@@ -36,9 +36,31 @@ def test_delete_refuses_before_asking(run, args, message):
 
 def test_delete_passes_global_flags_through(run):
     result = run("kubectl-quotaextension-delete", "--context", "kind-test", "-y", "a")
-    assert result.args == ["--context kind-test delete quotaextension a"]
+    assert result.args == ["--context kind-test -n quota-warden delete quotaextension a"]
 
 
 def test_delete_fails_when_kubectl_does(run):
     result = run("kubectl-quotaextension-delete", "-y", "a", env={"STUB_DELETE_EXIT": "1"})
     assert result.returncode == 1
+
+
+@pytest.mark.parametrize(
+    ("args", "env"),
+    [
+        (["--warden-namespace", "ops"], None),
+        (["--warden-namespace=ops"], None),
+        ([], {"QUOTA_WARDEN_NAMESPACE": "ops"}),
+        # the flag wins over the env var
+        (["--warden-namespace", "ops"], {"QUOTA_WARDEN_NAMESPACE": "other"}),
+    ],
+)
+def test_the_operator_namespace_is_settable(run, args, env):
+    result = run("kubectl-quotaextension-delete", *args, "-y", "a", env=env)
+    assert result.args == ["-n ops delete quotaextension a"]
+
+
+@pytest.mark.parametrize("args", [["--warden-namespace"], ["--warden-namespace="]])
+def test_an_empty_operator_namespace_is_refused(run, args):
+    result = run("kubectl-quotaextension-delete", "-y", "a", *args)
+    assert result.returncode != 0 and "--warden-namespace needs a value" in result.stderr
+    assert not result.args
