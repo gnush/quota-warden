@@ -23,14 +23,15 @@ class Event:
 
 
 def merge_conditions(
-    current: list[dict], wanted: list[Condition], now: datetime
+    current: list[dict], wanted: list[Condition], now: datetime, drop: frozenset[str] = frozenset()
 ) -> tuple[list[dict], list[Condition]]:
     """New conditions list and the wanted conditions whose status changed.
 
-    Types not in `wanted` are kept. lastTransitionTime moves only on a status change.
+    Types not in `wanted` are kept unless in `drop`. lastTransitionTime moves only on a
+    status change.
     """
     by_type = {c.get("type"): c for c in current}
-    result = [c for c in current if c.get("type") not in {w.type for w in wanted}]
+    result = [c for c in current if c.get("type") not in {w.type for w in wanted} | drop]
     transitions = []
     for w in wanted:
         old = by_type.get(w.type)
@@ -51,10 +52,12 @@ def merge_conditions(
     return result, transitions
 
 
-def update(custom, plural: str, body: dict, wanted: list[Condition], now=None) -> list[Event]:
+def update(
+    custom, plural: str, body: dict, wanted: list[Condition], now=None, drop=frozenset()
+) -> list[Event]:
     """Patch status.conditions if anything differs; return Events for the transitions."""
     current = (body.get("status") or {}).get("conditions") or []
-    new, transitions = merge_conditions(current, wanted, now or datetime.now(UTC))
+    new, transitions = merge_conditions(current, wanted, now or datetime.now(UTC), drop)
     if sorted(new, key=lambda c: c["type"]) != sorted(current, key=lambda c: c.get("type", "")):
         custom.patch_cluster_custom_object_status(
             GROUP,

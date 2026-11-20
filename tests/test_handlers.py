@@ -147,6 +147,16 @@ def test_config_error_makes_the_base_conditions_unknown_until_fixed():
     assert conditions["Valid"][0] == conditions["Applied"][0] == "True"
 
 
+def test_removing_the_base_drops_its_conditions():
+    custom = FakeCustom(config(managedNamespaces=SELECTOR, baseResources=dict(cpu="1")))
+    core = FakeCore([namespace("a")])
+    run_once(core, custom)
+    del custom.objects["quotawardenconfigs", "default"]["spec"]["baseResources"]
+    run_once(core, custom)
+    assert custom.conditions("quotawardenconfigs", "default").keys() == {"Ready", "Exclusive"}
+    assert core.quotas == {}
+
+
 def test_invalid_and_rejected_name_the_key_and_the_namespace():
     custom = FakeCustom(config(managedNamespaces=SELECTOR, baseResources=dict(cpu="-1", bad="1")))
     run_once(FakeCore([namespace("a")]), custom)

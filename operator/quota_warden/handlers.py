@@ -104,10 +104,14 @@ def run_once(core, custom, state: State | None = None, now: datetime | None = No
     extensions = list_objects(custom, "quotaextensions")
     results, issues = sweep(core, base, overrides, extensions, config, now)
     wanted = [ready, _exclusive(results, config)]
+    drop = frozenset()
     if base is not None:
         wanted += _source_conditions(base, issues, results, config.dry_run)
+    else:
+        # left from a removed baseResources, they would report a base that is gone
+        drop = frozenset({"Valid", "Applied"})
     # one patch: a second update from the same stale body would undo the first
-    events = update(custom, "quotawardenconfigs", body, wanted)
+    events = update(custom, "quotawardenconfigs", body, wanted, drop=drop)
     for r in results:
         for quota in r.foreign_deleted:
             logger.info("%s: deleted foreign ResourceQuota %s", r.namespace, quota)

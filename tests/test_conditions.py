@@ -87,3 +87,9 @@ def test_update_patches_and_warns_on_false():
     assert [(e.body, e.type, e.reason, e.message) for e in events] == [
         (b, "Warning", "InvalidValues", "Valid=False: x")
     ]
+
+
+def test_dropped_types_are_removed():
+    current = [stored("Valid", "True"), stored("Ready", "True")]
+    new, _ = merge_conditions(current, [], T0, frozenset({"Valid"}))
+    assert [c["type"] for c in new] == ["Ready"]
