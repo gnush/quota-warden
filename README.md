@@ -3,8 +3,8 @@
 [![ci](https://github.com/gnush/quota-warden/actions/workflows/ci.yml/badge.svg)](https://github.com/gnush/quota-warden/actions/workflows/ci.yml)
 
 A Kubernetes operator that writes one ResourceQuota per managed namespace,
-merged from three cluster-scoped sources: a `QuotaBase`, a per-namespace
-`QuotaOverride`, and `QuotaExtension`s that expire on a date. A ResourceQuota
+merged from three cluster-scoped sources: a base in the `QuotaWardenConfig`, a
+per-namespace `QuotaOverride`, and `QuotaExtension`s that expire on a date. A ResourceQuota
 without the operator's managed-by label is reported rather than overwritten.
 
 Built on [kopf](https://kopf.readthedocs.io/). Requires a `QuotaWardenConfig`
@@ -144,6 +144,7 @@ the sweep loop and deleting the last one stops it, with no restart either way.
 | Field                   | Default        |                                                                             |
 |-------------------------|----------------|-----------------------------------------------------------------------------|
 | `managedNamespaces`     | unset          | label selector over Namespaces; unset manages nothing, `{}` everything      |
+| `baseResources`         | unset          | the base: every managed namespace's default; see [Sources](#sources)        |
 | `protectedNamespaces`   | `[]`           | never managed, on top of `kube-system`, `kube-public` and `kube-node-lease` |
 | `resourceQuotaName`     | `quota-warden` | the ResourceQuota written                                                   |
 | `dryRun`                | `false`        | report what would change; write and delete nothing                          |
@@ -156,24 +157,23 @@ stored and surfaces as `Ready=False`, rather than being rejected by the CRD.
 
 ## Sources
 
-One ResourceQuota per managed namespace, merged from three cluster-scoped kinds.
-Examples: `cluster/fixtures/quota-{base,override,extension}.yaml`.
+One ResourceQuota per managed namespace, merged from three sources.
+Examples: `deploy/config.yaml`, `cluster/fixtures/quota-{override,extension}.yaml`.
 
-| Kind             | Applies to                                                     | Per key                          |
-|------------------|----------------------------------------------------------------|----------------------------------|
-| `QuotaBase`      | every managed namespace; the one `QuotaBase` object            | the default                      |
-| `QuotaOverride`  | `spec.namespace`, which must equal its name: one per namespace | replaces the base                |
-| `QuotaExtension` | `spec.namespace`, through `expirationDate` (UTC)               | added on top of base or override |
+| Source                       | Applies to                                                     | Per key                          |
+|------------------------------|----------------------------------------------------------------|----------------------------------|
+| config `spec.baseResources`  | every managed namespace                                        | the default                      |
+| `QuotaOverride`              | `spec.namespace`, which must equal its name: one per namespace | replaces the base                |
+| `QuotaExtension`             | `spec.namespace`, through `expirationDate` (UTC)               | added on top of base or override |
 
 A key no source sets is absent from the quota; an empty merge removes the quota.
 A source aimed at an unmanaged, protected or missing namespace is inert
 (`Targeted=False`). An invalid or negative value drops that key only
 (`Valid=False`).
 
-`QuotaBase` is a singleton: the operator reads whichever one exists, and one
-cluster-wide base serves every managed namespace. Two of them is a configuration
-error — nothing is touched and the config reports `Ready=False/BaseError`. No
-base at all means no defaults; overrides and extensions still apply.
+Unset `baseResources` means no defaults; overrides and extensions still apply.
+The base's `Valid` and `Applied` are on the config; while it is `Ready=False`
+they are `Unknown`, and unsetting `baseResources` removes them.
 
 Expired `QuotaExtension`s are deleted by the operator, whatever namespace they
 target; under `dryRun` they are only reported.

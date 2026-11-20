@@ -40,7 +40,7 @@ spec:
         - name: Age
           type: date
           jsonPath: .metadata.creationTimestamp
-        # See QuotaBase: the only column that can show keys the CRD does not name.
+        # See quotaoverride.yaml: the only column that can show keys the CRD does not name.
         - name: All
           type: string
           jsonPath: .spec.resources
@@ -62,7 +62,7 @@ spec:
                   type: string
                   format: date
                   pattern: '^\d{4}-\d{2}-\d{2}$'
-                # Same as QuotaBase: the merge validates values.
+                # Same as QuotaOverride: the merge validates values.
                 resources:
                   type: object
                   additionalProperties:

@@ -25,7 +25,7 @@ spec:
         - name: Quota
           type: string
           jsonPath: .spec.resourceQuotaName
-        # the whole map: printer columns cannot range over keys the CRD does not name
+        # See quotaoverride.yaml: the only column that can show every key.
         - name: Base
           type: string
           jsonPath: .spec.baseResources

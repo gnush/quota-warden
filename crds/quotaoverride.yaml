@@ -34,7 +34,9 @@ spec:
         - name: Age
           type: date
           jsonPath: .metadata.creationTimestamp
-        # See QuotaBase: the only column that can show keys the CRD does not name.
+        # The whole map as JSON. Printer columns are fixed at apply time and the
+        # API rejects `{range}` in jsonPath, so this is the only way a key the
+        # columns above do not name stays visible in `kubectl get`.
         - name: All
           type: string
           jsonPath: .spec.resources
@@ -55,7 +57,8 @@ spec:
                 namespace:
                   type: string
                   minLength: 1
-                # Same as QuotaBase: the merge validates values.
+                # Any key, no quantity pattern: the merge validates values and
+                # reports them as conditions.
                 resources:
                   type: object
                   additionalProperties:

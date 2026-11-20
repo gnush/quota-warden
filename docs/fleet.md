@@ -2,7 +2,7 @@
 
 Fleet cannot install the repo root. Its kustomize post-renderer builds an
 in-memory filesystem and drops the root when the kustomize dir is `.`, so a root
-`kustomization.yaml` fails with `file 'crds/quotabase.yaml' is not in or below ''`
+`kustomization.yaml` fails with `file 'crds/quotaoverride.yaml' is not in or below ''`
 ([rancher/fleet#1816](https://github.com/rancher/fleet/issues/1816), closed
 unfixed). List the two directories instead; each becomes its own bundle:
 
