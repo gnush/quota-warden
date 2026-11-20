@@ -76,7 +76,14 @@ def run_once(core, custom, state: State | None = None, now: datetime | None = No
             # the base is not evaluated; a stale Applied=True would claim it is in effect
             present = {c.get("type") for c in (target.get("status") or {}).get("conditions") or []}
             wanted += [
-                Condition(t, "Unknown", "ConfigError", "config not loaded; base not evaluated")
+                # Normal: Ready=False already warns about the cause
+                Condition(
+                    t,
+                    "Unknown",
+                    "ConfigError",
+                    "config not loaded; base not evaluated",
+                    event="Normal",
+                )
                 for t in ("Valid", "Applied")
                 if t in present
             ]

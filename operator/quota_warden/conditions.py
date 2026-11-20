@@ -9,9 +9,11 @@ from .reconcile import GROUP, VERSION
 @dataclass(frozen=True)
 class Condition:
     type: str
-    status: str  # "True" | "False"
+    status: str  # "True" | "False" | "Unknown"
     reason: str
     message: str = ""
+    # overrides the Event type derived from status
+    event: str | None = None
 
 
 @dataclass(frozen=True)
@@ -71,7 +73,7 @@ def update(
     return [
         Event(
             body,
-            "Normal" if c.status == "True" else "Warning",
+            c.event or ("Normal" if c.status == "True" else "Warning"),
             c.reason,
             f"{c.type}={c.status}" + (f": {c.message}" if c.message else ""),
         )

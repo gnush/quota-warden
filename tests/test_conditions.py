@@ -93,3 +93,12 @@ def test_dropped_types_are_removed():
     current = [stored("Valid", "True"), stored("Ready", "True")]
     new, _ = merge_conditions(current, [], T0, frozenset({"Valid"}))
     assert [c["type"] for c in new] == ["Ready"]
+
+
+def test_unknown_warns_unless_the_event_type_is_given():
+    wanted = [
+        Condition("Valid", "Unknown", "X"),
+        Condition("Applied", "Unknown", "X", event="Normal"),
+    ]
+    events = update(FakeCustom(), "quotaoverrides", body(), wanted, T0)
+    assert [(e.reason, e.type) for e in events] == [("X", "Warning"), ("X", "Normal")]

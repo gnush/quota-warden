@@ -137,7 +137,12 @@ def test_config_error_makes_the_base_conditions_unknown_until_fixed():
     run_once(core, custom)
     spec = custom.objects["quotawardenconfigs", "default"]["spec"]
     del spec["managedNamespaces"]
-    run_once(core, custom)
+    events = run_once(core, custom)
+    assert sorted((e.message.split("=")[0], e.type) for e in events) == [
+        ("Applied", "Normal"),
+        ("Ready", "Warning"),
+        ("Valid", "Normal"),
+    ]
     conditions = custom.objects["quotawardenconfigs", "default"]["status"]["conditions"]
     statuses = {c["type"]: (c["status"], c["reason"]) for c in conditions}
     assert statuses["Valid"] == statuses["Applied"] == ("Unknown", "ConfigError")
