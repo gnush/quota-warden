@@ -7,7 +7,7 @@ import pytest
 from kubernetes.client.exceptions import ApiException
 
 from quota_warden.config import Config
-from quota_warden.reconcile import FIELD_MANAGER, MANAGED_BY, PROVENANCE, read_object, sweep
+from quota_warden.reconcile import FIELD_MANAGER, MANAGED_BY, PROVENANCE, sweep
 
 SELECTOR = {"matchLabels": {"managed": "yes"}}
 CONFIG = Config({"managedNamespaces": SELECTOR}, "quota-warden", False, "report", "delete")
@@ -223,23 +223,6 @@ def test_other_api_errors_propagate():
     core.list_namespaced_resource_quota = lambda *_: (_ for _ in ()).throw(ApiException(500))
     with pytest.raises(ApiException):
         run(core, base(cpu="1"))
-
-
-def test_read_object_propagates_non_404():
-    class Broken:
-        def get_cluster_custom_object(self, *_):
-            raise ApiException(status=403)
-
-    with pytest.raises(ApiException):
-        read_object(Broken(), "quotaoverrides", "default")
-
-
-def test_read_object_absent_is_none():
-    class Absent:
-        def get_cluster_custom_object(self, *_):
-            raise ApiException(status=404)
-
-    assert read_object(Absent(), "quotaoverrides", "default") is None
 
 
 DRY = Config(CONFIG.spec, "quota-warden", True, "report", "delete")

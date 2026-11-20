@@ -51,15 +51,6 @@ class Result:
     retained: tuple[str, ...] = ()
 
 
-def read_object(custom, plural: str, name: str) -> dict | None:
-    try:
-        return custom.get_cluster_custom_object(GROUP, VERSION, plural, name)
-    except ApiException as exc:
-        if exc.status == 404:
-            return None
-        raise
-
-
 def list_objects(custom, plural: str) -> list[dict]:
     return custom.list_cluster_custom_object(GROUP, VERSION, plural)["items"]
 

@@ -17,12 +17,6 @@ class FakeCustom:
         self.patches = 0
         self.deleted = []
 
-    def get_cluster_custom_object(self, group, version, plural, name):
-        try:
-            return self.objects[plural, name]
-        except KeyError:
-            raise ApiException(status=404) from None
-
     def list_cluster_custom_object(self, group, version, plural):
         return {"items": [o for (p, _), o in self.objects.items() if p == plural]}
 
