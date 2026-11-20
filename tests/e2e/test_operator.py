@@ -117,6 +117,7 @@ class Operator:
                 env={
                     **os.environ,
                     "KUBECONFIG": str(self.kubeconfig),
+                    "QUOTA_WARDEN_NAMESPACE": "quota-warden",
                 },
                 stdout=out,
                 stderr=subprocess.STDOUT,

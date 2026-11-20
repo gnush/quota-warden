@@ -30,6 +30,7 @@ while that config is missing or invalid.
 | Env var                        | Default   |                                                                                                                             |
 |--------------------------------|-----------|-----------------------------------------------------------------------------------------------------------------------------|
 | `QUOTA_WARDEN_RESYNC_INTERVAL` | `1h`      | full sweep without a triggering event; `<n>s`, `<n>m` or `<n>h`; read at startup. An expiry takes effect at most this late. |
+| `QUOTA_WARDEN_NAMESPACE`       | pod's own | namespace holding the operator's objects; must be set when running outside a pod. |
 
 ## Deploying
 

@@ -2,7 +2,7 @@ from datetime import timedelta
 
 import pytest
 
-from quota_warden.config import ConfigError, load, resync_interval
+from quota_warden.config import ConfigError, load, operator_namespace, resync_interval
 
 # as stored: the CRD fills the defaults
 DEFAULTS = {
@@ -83,3 +83,25 @@ def test_base_resources_are_optional():
     assert load(body(managedNamespaces={}, baseResources={"cpu": "1"})).base_resources == {
         "cpu": "1"
     }
+
+
+def test_operator_namespace_env_wins(tmp_path):
+    path = tmp_path / "namespace"
+    path.write_text("from-file")
+    assert operator_namespace({"QUOTA_WARDEN_NAMESPACE": "ops"}, str(path)) == "ops"
+
+
+@pytest.mark.parametrize("environ", [{}, {"QUOTA_WARDEN_NAMESPACE": ""}])
+def test_operator_namespace_from_file(tmp_path, environ):
+    path = tmp_path / "namespace"
+    path.write_text("ops\n")
+    assert operator_namespace(environ, str(path)) == "ops"
+
+
+@pytest.mark.parametrize("content", [None, "", "\n"])
+def test_operator_namespace_missing(tmp_path, content):
+    path = tmp_path / "namespace"
+    if content is not None:
+        path.write_text(content)
+    with pytest.raises(ConfigError, match="QUOTA_WARDEN_NAMESPACE"):
+        operator_namespace({}, str(path))

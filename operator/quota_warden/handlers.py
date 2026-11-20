@@ -18,7 +18,7 @@ from kubernetes.client.exceptions import ApiException
 from kubernetes.utils.quantity import parse_quantity
 
 from .conditions import Condition, Event, update
-from .config import ConfigError, load, resync_interval
+from .config import ConfigError, load, operator_namespace, resync_interval
 from .merge import expires_at, source_id
 from .quantity import format_quantity
 from .reconcile import GROUP, expired, list_objects, reap, singleton, sweep
@@ -470,6 +470,7 @@ async def _until(stopped) -> None:
 async def startup(settings: kopf.OperatorSettings, memo: kopf.Memo, **_):
     try:
         interval = resync_interval(os.environ)
+        memo.namespace = operator_namespace(os.environ)
     except ConfigError as exc:
         raise kopf.PermanentError(str(exc)) from exc
     try:

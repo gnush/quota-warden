@@ -8,6 +8,8 @@ from typing import Literal
 from .targeting import SelectorError, validate_selector
 
 DEFAULT_RESYNC_INTERVAL = "1h"
+# mounted with the token, which the operator needs anyway
+SERVICE_ACCOUNT_NAMESPACE = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 
 _DURATION = re.compile(r"([1-9]\d*)([smh])")
 _UNITS = {"s": "seconds", "m": "minutes", "h": "hours"}
@@ -61,3 +63,18 @@ def resync_interval(environ) -> timedelta:
     if not match:
         raise ConfigError(f"QUOTA_WARDEN_RESYNC_INTERVAL={value!r}: expected e.g. 30m or 1h")
     return timedelta(**{_UNITS[match[2]]: int(match[1])})
+
+
+def operator_namespace(environ, path: str = SERVICE_ACCOUNT_NAMESPACE) -> str:
+    """QUOTA_WARDEN_NAMESPACE, else the pod's own namespace."""
+    value = environ.get("QUOTA_WARDEN_NAMESPACE")
+    if value:
+        return value
+    try:
+        with open(path) as f:
+            value = f.read().strip()
+    except FileNotFoundError:
+        value = ""
+    if not value:
+        raise ConfigError("QUOTA_WARDEN_NAMESPACE is unset and not running in a pod")
+    return value
