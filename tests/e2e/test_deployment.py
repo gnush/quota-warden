@@ -198,7 +198,7 @@ def test_the_deployment_defaults_to_one_replica(api, operator):
 def test_the_operator_holds_the_peering_object(api, operator):
     """RBAC: get and patch on kopf.dev/clusterkopfpeerings, and the object exists."""
     peering = client.CustomObjectsApi().get_cluster_custom_object(
-        "kopf.dev", "v1", "clusterkopfpeerings", "default"
+        "kopf.dev", "v1", "clusterkopfpeerings", "quota-warden"
     )
     assert peering["status"], peering
 
@@ -216,7 +216,7 @@ def test_two_replicas_write_once_between_them(api, custom, operator):
         # not the "Pausing" log line: a replica that loses the draw starts paused
         # and never logs it, only one that is outranked while running does
         peers = client.CustomObjectsApi().get_cluster_custom_object(
-            "kopf.dev", "v1", "clusterkopfpeerings", "default"
+            "kopf.dev", "v1", "clusterkopfpeerings", "quota-warden"
         )["status"]
         live = [p for p in peers.values() if p.get("lifetime", 0) > 0]
         assert len({p["priority"] for p in live}) == 2, peers

@@ -107,8 +107,9 @@ server-side apply with one field manager.
 
 **The peering CRD is not optional.** `crds/clusterkopfpeering.yaml` must be
 installed, and the operator sets `peering.mandatory`. Without the CRD it exits at
-startup naming the permission; without the `ClusterKopfPeering` object it creates
-it, and creates it only with RBAC to do so. Missing either, kopf would otherwise
+startup naming the permission; without the `ClusterKopfPeering` object
+`quota-warden` it creates it, and creates it only with RBAC to do so. One peering
+per cluster: installs in two namespaces write the same quotas, so only one sweeps. Missing either, kopf would otherwise
 fall back to standalone — every replica sweeping, which is the case peering
 exists to prevent.
 

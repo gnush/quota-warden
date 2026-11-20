@@ -973,11 +973,11 @@ def test_peering_is_mandatory_and_distinct_per_replica(monkeypatch):
 
     # without it a missing peering object is silently standalone: two replicas sweep
     assert settings.peering.mandatory is True
-    assert settings.peering.name == "default"
+    assert settings.peering.name == "quota-warden"
     assert settings.peering.priority == 7
     group, version, plural, body = created[0]
     assert (group, version, plural) == ("kopf.dev", "v1", "clusterkopfpeerings")
-    assert body["metadata"]["name"] == "default"
+    assert body["metadata"]["name"] == "quota-warden"
 
 
 def test_priorities_are_drawn_from_kopfs_documented_range(monkeypatch):
@@ -998,7 +998,7 @@ def test_a_missing_peering_crd_is_reported(monkeypatch):
 
     with pytest.raises(kopf.PermanentError):
         configure_peering(Settings(), monkeypatch, status=404)
-    assert handlers.PEERING_NAME == "default"
+    assert handlers.PEERING_NAME == "quota-warden"
 
 
 def test_only_the_operator_namespace_passes_the_filter():

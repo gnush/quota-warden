@@ -27,7 +27,8 @@ logger = logging.getLogger(__name__)
 
 # kopf's peering, not leader election of our own: it pauses the lower-ranked
 # replica's timers, daemons and watch streams, which is all a sweep touches.
-PEERING_NAME = "default"
+# not kopf's "default": another kopf operator using that would share our peering
+PEERING_NAME = "quota-warden"
 PEERING_OBJECT = "clusterkopfpeerings"
 # 32768: kopf's documented $RANDOM range. A collision pauses both replicas --
 # a stall, which the next rollout clears -- so the draw need only be unlikely.
