@@ -36,7 +36,7 @@ NotTargeted). Where the operator has not looked yet, STATUS is -.
 live (default: \$QUOTA_WARDEN_NAMESPACE, else quota-warden).
 
 The resources an extension adds, and every condition with its message, are in
-\`kubectl describe quotaextension NAME\`.
+\`kubectl describe quotaextension -n $WARDEN_NAMESPACE NAME\`.
 EOF
 }
 

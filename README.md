@@ -3,8 +3,9 @@
 [![ci](https://github.com/gnush/quota-warden/actions/workflows/ci.yml/badge.svg)](https://github.com/gnush/quota-warden/actions/workflows/ci.yml)
 
 A Kubernetes operator that writes one ResourceQuota per managed namespace,
-merged from three cluster-scoped sources: a base in the `QuotaWardenConfig`, a
-per-namespace `QuotaOverride`, and `QuotaExtension`s that expire on a date. A ResourceQuota
+merged from three sources in the operator's namespace: a base in the
+`QuotaWardenConfig`, a per-namespace `QuotaOverride`, and `QuotaExtension`s that
+expire on a date. A ResourceQuota
 without the operator's managed-by label is reported rather than overwritten.
 
 Built on [kopf](https://kopf.readthedocs.io/). Requires a `QuotaWardenConfig`
@@ -13,12 +14,12 @@ before it manages anything — see [Configuration](#configuration).
 ## Running
 
 ```sh
-kubectl apply -f crds/
-.venv/bin/kopf run --all-namespaces -m quota_warden.handlers
+kubectl apply -f crds/ -f namespace.yaml
+QUOTA_WARDEN_NAMESPACE=quota-warden .venv/bin/kopf run --all-namespaces -m quota_warden.handlers
 ```
 
-In a pod it uses the service account; elsewhere the current kubeconfig context,
-so check `kubectl config current-context` first. `crds/` includes kopf's peering
+In a pod it uses the service account and its namespace; elsewhere the current
+kubeconfig context, so check `kubectl config current-context` first. `crds/` includes kopf's peering
 CRD, which this refuses to run without — see [Replicas](#replicas).
 
 Log level is kopf's: `--quiet` for problems only, `--verbose` for everything,
@@ -137,7 +138,7 @@ can override without vendoring the manifests differs:
 
 ## Configuration
 
-One cluster-scoped `QuotaWardenConfig` drives the operator:
+One `QuotaWardenConfig` in the operator's namespace drives the operator:
 which namespaces are managed, which quota is written and whether it is written at all.
 Editing it triggers a sweep. A missing or invalid config touches no namespace:
 the operator logs `ConfigError` and, when the object exists, sets `Ready=False`.
@@ -164,6 +165,10 @@ stored and surfaces as `Ready=False`, rather than being rejected by the CRD.
 
 One ResourceQuota per managed namespace, merged from three sources.
 Examples: `deploy/config.yaml`, `cluster/fixtures/quota-{override,extension}.yaml`.
+
+Sources are read from the operator's namespace only, so write access there is
+control over every quota; tenants need none. A source anywhere else has no
+effect and gets `Applied=False` (`WrongNamespace`).
 
 | Source                       | Applies to                                                     | Per key                          |
 |------------------------------|----------------------------------------------------------------|----------------------------------|
@@ -226,6 +231,9 @@ kubectl quotaextension list [-n alice]
 kubectl quotaextension edit alice-ext-1
 kubectl quotaextension delete alice-ext-1
 ```
+
+Extensions live in the operator's namespace: `QUOTA_WARDEN_NAMESPACE` or
+`--warden-namespace`, default `quota-warden`. `-n` is always the target.
 
 `list` shows the operator's verdict per extension in `STATUS`, taken from the
 `Applied` condition; `-` means no sweep has seen it yet. Keys offered by `create`
