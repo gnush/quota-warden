@@ -189,7 +189,7 @@ def test_a_sweep_with_nothing_to_change_writes_nothing(api, custom, base):
     base(cpu="4")
     wait_for(lambda: hard(api) == q(cpu="4"))
     # the base's conditions are patched onto the config after the quota write
-    wait_for(lambda: conditions_of(custom).get("Applied"))
+    wait_for(lambda: conditions_of(custom).get("Applied", {}).get("status") == "True")
     quota = api.read_namespaced_resource_quota(QUOTA, NAMESPACE).metadata.resource_version
     config = custom.get_cluster_custom_object(GROUP, VERSION, "quotawardenconfigs", CONFIG)
     # an annotation is a watch event, so it requests a sweep, but changes nothing it reads
