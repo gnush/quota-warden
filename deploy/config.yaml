@@ -11,3 +11,8 @@ spec:
     - kube-system
     - quota-warden
   dryRun: true
+  # unset: no defaults; overrides and extensions still apply
+  # baseResources:
+  #   cpu: "18"
+  #   memory: 130Gi
+  #   requests.storage: 300Gi

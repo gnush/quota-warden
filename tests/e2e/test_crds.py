@@ -20,7 +20,6 @@ def create(custom):
             "apiVersion": f"{GROUP}/{VERSION}",
             "kind": {
                 "quotawardenconfigs": "QuotaWardenConfig",
-                "quotabases": "QuotaBase",
                 "quotaoverrides": "QuotaOverride",
                 "quotaextensions": "QuotaExtension",
             }[plural],
@@ -67,8 +66,8 @@ def test_malformed_selector_is_stored_for_the_operator_to_report(create):
 
 def test_base_takes_any_key_as_int_or_string(create):
     resources = {"cpu": "18", "persistentvolumeclaims": 30, "example.com/anything": "1Gi"}
-    spec = create("quotabases", "e2e-base", {"resources": resources})["spec"]
-    assert spec["resources"] == resources
+    spec = create("quotawardenconfigs", "e2e-base", {"baseResources": resources})["spec"]
+    assert spec["baseResources"] == resources
 
 
 def test_override_takes_any_key_as_int_or_string(create):
@@ -132,10 +131,6 @@ def test_extension_requires_a_namespace_and_a_valid_date(create, spec):
 
 
 COLUMNS = {
-    "quotabases": (
-        {"e2e-columns": {"resources": {"cpu": "18", "memory": "130Gi"}}},
-        ["NAME", "CPU", "MEMORY", "VALID", "APPLIED", "AGE", "ALL"],
-    ),
     # an override is named after its namespace
     "quotaoverrides": (
         {"quota-user-a": {"namespace": "quota-user-a", "resources": {"cpu": "2"}}},
@@ -153,7 +148,7 @@ COLUMNS = {
     ),
     "quotawardenconfigs": (
         {"e2e-columns": {}},
-        ["NAME", "READY", "DRYRUN", "QUOTA", "AGE"],
+        ["NAME", "READY", "DRYRUN", "QUOTA", "BASE", "AGE"],
     ),
 }
 

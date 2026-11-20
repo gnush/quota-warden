@@ -229,7 +229,7 @@ def test_read_object_propagates_non_404():
             raise ApiException(status=403)
 
     with pytest.raises(ApiException):
-        read_object(Broken(), "quotabases", "default")
+        read_object(Broken(), "quotaoverrides", "default")
 
 
 def test_read_object_absent_is_none():
@@ -237,7 +237,7 @@ def test_read_object_absent_is_none():
         def get_cluster_custom_object(self, *_):
             raise ApiException(status=404)
 
-    assert read_object(Absent(), "quotabases", "default") is None
+    assert read_object(Absent(), "quotaoverrides", "default") is None
 
 
 DRY = Config(CONFIG.spec, "quota-warden", True, "report", "delete")

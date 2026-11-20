@@ -24,6 +24,7 @@ class Config:
     dry_run: bool
     foreign_resource_quotas: Literal["report", "delete", "ignore"]
     on_unmanage: Literal["delete", "retain"]
+    base_resources: dict | None = None
 
 
 def load(body: dict | None) -> Config:
@@ -47,6 +48,7 @@ def load(body: dict | None) -> Config:
             spec["dryRun"],
             spec["foreignResourceQuotas"],
             spec["onUnmanage"],
+            spec.get("baseResources"),
         )
     except KeyError as exc:
         raise ConfigError(f"{exc.args[0]} missing; is the CRD up to date?") from None

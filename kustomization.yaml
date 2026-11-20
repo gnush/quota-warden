@@ -3,7 +3,6 @@ kind: Kustomization
 # Not `- crds`: that directory has no kustomization of its own, because
 # `kubectl apply -f crds/` must keep working. Listed file by file instead.
 resources:
-  - crds/quotabase.yaml
   - crds/quotaoverride.yaml
   - crds/quotaextension.yaml
   - crds/quotawardenconfig.yaml

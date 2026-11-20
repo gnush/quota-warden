@@ -17,7 +17,6 @@ from kubernetes.utils.quantity import parse_quantity
 from conftest import GROUP, LABEL, MANAGED_LABEL, VERSION, delete, exists, wait_for
 
 CONFIG = "e2e"
-BASE = "e2e"
 QUOTA = "quota-warden"
 NAMESPACE = "e2e-operator"
 
@@ -75,7 +74,7 @@ def operator(api, custom, tmp_path_factory):
         process.start()
         yield process
     finally:
-        delete(custom.delete_cluster_custom_object, GROUP, VERSION, "quotabases", BASE)
+        unset_base(custom)
         if process.poll() is None:
             # the operator removes its own quotas once the base is gone
             wait_for(lambda: hard(api) is None and hard(api, "quota-user-a") is None)
@@ -125,31 +124,26 @@ class Operator:
         return failed
 
 
+def unset_base(custom):
+    custom.patch_cluster_custom_object(
+        GROUP, VERSION, "quotawardenconfigs", CONFIG, {"spec": {"baseResources": None}}
+    )
+
+
 @pytest.fixture
 def base(custom, operator):
-    """Set the base's resources, creating it if needed."""
+    """Set the config's baseResources."""
 
     def _set(**resources):
-        body = {
-            "apiVersion": f"{GROUP}/{VERSION}",
-            "kind": "QuotaBase",
-            "metadata": {"name": BASE},
-            "spec": {"resources": resources},
-        }
-        try:
-            custom.create_cluster_custom_object(GROUP, VERSION, "quotabases", body)
-        except ApiException as exc:
-            if exc.status != 409:
-                raise
-            # JSON patch: a merge patch would keep keys left out of `resources`
-            custom.patch_cluster_custom_object(
-                GROUP,
-                VERSION,
-                "quotabases",
-                BASE,
-                [{"op": "replace", "path": "/spec/resources", "value": resources}],
-                _content_type="application/json-patch+json",
-            )
+        # JSON patch: a merge patch would keep keys left out of `resources`
+        custom.patch_cluster_custom_object(
+            GROUP,
+            VERSION,
+            "quotawardenconfigs",
+            CONFIG,
+            [{"op": "add", "path": "/spec/baseResources", "value": resources}],
+            _content_type="application/json-patch+json",
+        )
 
     return _set
 
@@ -158,11 +152,15 @@ def label(api, value):
     api.patch_namespace(NAMESPACE, {"metadata": {"labels": {LABEL: value}}})
 
 
-def ready(custom):
+def conditions_of(custom):
     status = custom.get_cluster_custom_object(GROUP, VERSION, "quotawardenconfigs", CONFIG).get(
         "status", {}
     )
-    return {c["type"]: c for c in status.get("conditions", [])}.get("Ready")
+    return {c["type"]: c for c in status.get("conditions", [])}
+
+
+def ready(custom):
+    return conditions_of(custom).get("Ready")
 
 
 def test_labeling_a_namespace_creates_the_quota(api, base):
@@ -190,6 +188,8 @@ def test_a_sweep_with_nothing_to_change_writes_nothing(api, custom, base):
     label(api, MANAGED_LABEL[LABEL])
     base(cpu="4")
     wait_for(lambda: hard(api) == q(cpu="4"))
+    # the base's conditions are patched onto the config after the quota write
+    wait_for(lambda: conditions_of(custom).get("Applied"))
     quota = api.read_namespaced_resource_quota(QUOTA, NAMESPACE).metadata.resource_version
     config = custom.get_cluster_custom_object(GROUP, VERSION, "quotawardenconfigs", CONFIG)
     # an annotation is a watch event, so it requests a sweep, but changes nothing it reads
@@ -357,7 +357,7 @@ def test_deleting_the_base_removes_the_quota(api, custom, base):
     label(api, MANAGED_LABEL[LABEL])
     base(cpu="4")
     wait_for(lambda: hard(api))
-    custom.delete_cluster_custom_object(GROUP, VERSION, "quotabases", BASE)
+    unset_base(custom)
     assert wait_for(lambda: hard(api) is None and hard(api, "quota-user-a") is None)
 
 

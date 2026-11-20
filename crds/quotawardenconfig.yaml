@@ -25,6 +25,10 @@ spec:
         - name: Quota
           type: string
           jsonPath: .spec.resourceQuotaName
+        # the whole map: printer columns cannot range over keys the CRD does not name
+        - name: Base
+          type: string
+          jsonPath: .spec.baseResources
         - name: Age
           type: date
           jsonPath: .metadata.creationTimestamp
@@ -62,6 +66,12 @@ spec:
                   type: array
                   items:
                     type: string
+                # Every managed namespace's default. Any key, no quantity pattern:
+                # the merge validates values and reports them as conditions here.
+                baseResources:
+                  type: object
+                  additionalProperties:
+                    x-kubernetes-int-or-string: true
                 resourceQuotaName:
                   type: string
                   default: quota-warden

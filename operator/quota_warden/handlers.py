@@ -90,27 +90,21 @@ def run_once(core, custom, state: State | None = None, now: datetime | None = No
         f"config {body['metadata']['name']!r} loaded" + (", dry run" if config.dry_run else ""),
     )
 
-    bases = list_objects(custom, "quotabases")
-    base, base_error = singleton(bases, "QuotaBase")
-    if base_error:
-        state.log("base", logging.ERROR, f"{base_error}; touching no namespace")
-        # the bases are not read, so only the config can carry the report
-        return update(
-            custom,
-            "quotawardenconfigs",
-            body,
-            [Condition("Ready", "False", "BaseError", base_error)],
-        )
+    base = None
+    if config.base_resources is not None:
+        # a merge source, named after the config so issues and blame land on it
+        base = {"metadata": body["metadata"], "spec": {"resources": config.base_resources}}
     state.log(
-        "base",
-        logging.INFO,
-        f"QuotaBase {base['metadata']['name']!r} found" if base else "no QuotaBase; no defaults",
+        "base", logging.INFO, "baseResources set" if base else "no baseResources; no defaults"
     )
     overrides = list_objects(custom, "quotaoverrides")
     extensions = list_objects(custom, "quotaextensions")
     results, issues = sweep(core, base, overrides, extensions, config, now)
+    wanted = [ready, _exclusive(results, config)]
+    if base is not None:
+        wanted += _source_conditions(base, issues, results, config.dry_run)
     # one patch: a second update from the same stale body would undo the first
-    events = update(custom, "quotawardenconfigs", body, [ready, _exclusive(results, config)])
+    events = update(custom, "quotawardenconfigs", body, wanted)
     for r in results:
         for quota in r.foreign_deleted:
             logger.info("%s: deleted foreign ResourceQuota %s", r.namespace, quota)
@@ -124,10 +118,6 @@ def run_once(core, custom, state: State | None = None, now: datetime | None = No
     events += _foreign_events(results, state.foreign, config)
     events += _unmanage_events(results, state.retained)
     events += _dry_run_events(results, state.dry_run, config)
-    if base is not None:
-        events += update(
-            custom, "quotabases", base, _source_conditions(base, issues, results, config.dry_run)
-        )
     skipped = {r.namespace: r.reason for r in results if r.action == "skipped"}
     listed = {r.namespace for r in results}
     for override in overrides:
@@ -560,7 +550,6 @@ async def quota_event(memo: kopf.Memo, body, type, **_):
 
 
 @kopf.on.event("namespaces")
-@kopf.on.event(GROUP, "quotabases")
 @kopf.on.event(GROUP, "quotaoverrides")
 @kopf.on.event(GROUP, "quotaextensions")
 @kopf.on.event(GROUP, "quotawardenconfigs")

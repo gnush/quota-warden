@@ -76,3 +76,10 @@ def test_resync_interval(value, expected):
 def test_resync_interval_rejects(value):
     with pytest.raises(ConfigError, match="QUOTA_WARDEN_RESYNC_INTERVAL"):
         resync_interval({"QUOTA_WARDEN_RESYNC_INTERVAL": value})
+
+
+def test_base_resources_are_optional():
+    assert load(body(managedNamespaces={})).base_resources is None
+    assert load(body(managedNamespaces={}, baseResources={"cpu": "1"})).base_resources == {
+        "cpu": "1"
+    }

@@ -26,7 +26,6 @@ rules:
   - apiGroups: [quota-warden.gnush.github.io]
     resources:
       - quotawardenconfigs
-      - quotabases
       - quotaoverrides
       - quotaextensions
     verbs: [get, list, watch]
@@ -39,7 +38,6 @@ rules:
   - apiGroups: [quota-warden.gnush.github.io]
     resources:
       - quotawardenconfigs/status
-      - quotabases/status
       - quotaoverrides/status
       - quotaextensions/status
     verbs: [patch]

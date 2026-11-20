@@ -62,7 +62,7 @@ def test_update_writes_nothing_when_unchanged():
     custom = FakeCustom()
     events = update(
         custom,
-        "quotabases",
+        "quotaoverrides",
         body([stored("Valid", "True", "Parsed")]),
         [Condition("Valid", "True", "Parsed")],
         T1,
@@ -75,11 +75,11 @@ def test_update_patches_and_warns_on_false():
     custom = FakeCustom()
     b = body()
     events = update(
-        custom, "quotabases", b, [Condition("Valid", "False", "InvalidValues", "x")], T0
+        custom, "quotaoverrides", b, [Condition("Valid", "False", "InvalidValues", "x")], T0
     )
     assert custom.patches == [
         (
-            "quotabases",
+            "quotaoverrides",
             "default",
             {"status": {"conditions": [stored("Valid", "False", "InvalidValues", "x")]}},
         )

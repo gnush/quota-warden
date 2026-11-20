@@ -25,7 +25,6 @@ DEPLOYMENT = "quota-warden"
 LABEL = "e2e-deployment"
 MANAGED_LABEL = {LABEL: "yes"}
 CONFIG = "e2e-deployment"
-BASE = "e2e-deployment"
 QUOTA = "quota-warden"
 TARGET = "e2e-deployment-ns"
 OTHER = "e2e-deployment-unmanaged"
@@ -47,26 +46,21 @@ def q(**values):
 
 
 def set_base(custom, **resources):
-    body = {
-        "apiVersion": f"{GROUP}/{VERSION}",
-        "kind": "QuotaBase",
-        "metadata": {"name": BASE},
-        "spec": {"resources": resources},
-    }
-    try:
-        custom.create_cluster_custom_object(GROUP, VERSION, "quotabases", body)
-    except ApiException as exc:
-        if exc.status != 409:
-            raise
-        # JSON patch: a merge patch would keep keys left out of `resources`
-        custom.patch_cluster_custom_object(
-            GROUP,
-            VERSION,
-            "quotabases",
-            BASE,
-            [{"op": "replace", "path": "/spec/resources", "value": resources}],
-            _content_type="application/json-patch+json",
-        )
+    # JSON patch: a merge patch would keep keys left out of `resources`
+    custom.patch_cluster_custom_object(
+        GROUP,
+        VERSION,
+        "quotawardenconfigs",
+        CONFIG,
+        [{"op": "add", "path": "/spec/baseResources", "value": resources}],
+        _content_type="application/json-patch+json",
+    )
+
+
+def unset_base(custom):
+    custom.patch_cluster_custom_object(
+        GROUP, VERSION, "quotawardenconfigs", CONFIG, {"spec": {"baseResources": None}}
+    )
 
 
 @pytest.fixture(scope="module")
@@ -93,7 +87,6 @@ def operator(api, custom):
     )
     set_base(custom, cpu="2", memory="1Gi")
     yield start
-    delete(custom.delete_cluster_custom_object, GROUP, VERSION, "quotabases", BASE)
     delete(custom.delete_cluster_custom_object, GROUP, VERSION, "quotawardenconfigs", CONFIG)
     for name in (TARGET, OTHER):
         delete(api.delete_namespace, name)
@@ -355,7 +348,7 @@ def test_an_unmanaged_namespace_gets_nothing(api, operator):
 def test_deleting_the_base_removes_the_quota(api, custom, operator):
     """resourcequotas: delete."""
     wait_for(lambda: hard(api) is not None)
-    delete(custom.delete_cluster_custom_object, GROUP, VERSION, "quotabases", BASE)
+    unset_base(custom)
     assert wait_for(lambda: hard(api) is None), hard(api)
     set_base(custom, cpu="2", memory="1Gi")
 

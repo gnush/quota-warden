@@ -61,18 +61,14 @@ def config(**spec):
     }
 
 
-def base(name="default", **resources):
-    return {"plural": "quotabases", "metadata": {"name": name}, "spec": {"resources": resources}}
-
-
 def test_missing_config_touches_nothing():
     core = FakeCore([namespace("a")], {("a", "quota-warden"): quota({"cpu": "1"})})
-    assert run_once(core, FakeCustom(base(cpu="2"))) == []
+    assert run_once(core, FakeCustom()) == []
     assert core.writes == []
 
 
 def test_the_config_is_used_whatever_its_name():
-    custom = FakeCustom(config(managedNamespaces=SELECTOR), base(cpu="1"))
+    custom = FakeCustom(config(managedNamespaces=SELECTOR, baseResources=dict(cpu="1")))
     renamed = custom.objects.pop(("quotawardenconfigs", "default"))
     renamed["metadata"]["name"] = "whatever"
     custom.objects[("quotawardenconfigs", "whatever")] = renamed
@@ -85,7 +81,7 @@ def test_the_config_is_used_whatever_its_name():
 def test_two_configs_touch_nothing_and_each_reports_the_error():
     first = config(managedNamespaces=SELECTOR)
     second = {**config(managedNamespaces=SELECTOR), "metadata": {"name": "second"}}
-    custom = FakeCustom(first, second, base(cpu="1"))
+    custom = FakeCustom(first, second)
     core = FakeCore([namespace("a")], {("a", "quota-warden"): quota({"cpu": "1"})})
     run_once(core, custom)
     assert core.writes == []
@@ -108,7 +104,7 @@ def test_config_error_sets_the_condition_and_touches_no_namespace(spec):
 
 
 def test_fixing_the_config_clears_the_condition():
-    custom = FakeCustom(config(), base(cpu="1"))
+    custom = FakeCustom(config(baseResources=dict(cpu="1")))
     core = FakeCore([namespace("a")])
     run_once(core, custom)
     custom.objects["quotawardenconfigs", "default"]["spec"]["managedNamespaces"] = SELECTOR
@@ -119,22 +115,26 @@ def test_fixing_the_config_clears_the_condition():
 
 
 def test_sweep_sets_base_conditions_and_a_second_run_writes_nothing():
-    custom = FakeCustom(config(managedNamespaces=SELECTOR), base(cpu="1"))
+    custom = FakeCustom(config(managedNamespaces=SELECTOR, baseResources=dict(cpu="1")))
     core = FakeCore([namespace("a")])
     run_once(core, custom)
-    assert custom.conditions("quotabases", "default") == {
-        "Valid": ("True", ""),
-        "Applied": ("True", ""),
-    }
+    conditions = custom.conditions("quotawardenconfigs", "default")
+    assert (conditions["Valid"], conditions["Applied"]) == (("True", ""), ("True", ""))
     writes, patches = len(core.writes), custom.patches
     assert run_once(core, custom) == []
     assert (len(core.writes), custom.patches) == (writes, patches)
 
 
-def test_invalid_and_rejected_name_the_key_and_the_namespace():
-    custom = FakeCustom(config(managedNamespaces=SELECTOR), base(cpu="-1", bad="1"))
+def test_no_base_sets_no_source_conditions_on_the_config():
+    custom = FakeCustom(config(managedNamespaces=SELECTOR))
     run_once(FakeCore([namespace("a")]), custom)
-    conditions = custom.conditions("quotabases", "default")
+    assert custom.conditions("quotawardenconfigs", "default").keys() == {"Ready", "Exclusive"}
+
+
+def test_invalid_and_rejected_name_the_key_and_the_namespace():
+    custom = FakeCustom(config(managedNamespaces=SELECTOR, baseResources=dict(cpu="-1", bad="1")))
+    run_once(FakeCore([namespace("a")]), custom)
+    conditions = custom.conditions("quotawardenconfigs", "default")
     assert conditions["Valid"][0] == "False" and "cpu" in conditions["Valid"][1]
     assert conditions["Applied"][0] == "False" and conditions["Applied"][1].startswith("a: ")
 
@@ -164,8 +164,7 @@ def extension(name, target, expires, **resources):
 )
 def test_extension_counts_until_expiry(now, gpu):
     custom = FakeCustom(
-        config(managedNamespaces=SELECTOR),
-        base(gpu="1"),
+        config(managedNamespaces=SELECTOR, baseResources=dict(gpu="1")),
         extension("e", "a", "2026-11-08", gpu="8"),
     )
     core = FakeCore([namespace("a")])
@@ -178,8 +177,7 @@ NOW = datetime(2026, 11, 8, 12, tzinfo=UTC)
 
 def test_extension_gets_conditions_like_an_override():
     custom = FakeCustom(
-        config(managedNamespaces=SELECTOR),
-        base(cpu="1"),
+        config(managedNamespaces=SELECTOR, baseResources=dict(cpu="1")),
         extension("e", "a", "2026-11-08", gpu="8", memory="x"),
     )
     run_once(FakeCore([namespace("a")]), custom, now=NOW)
@@ -212,7 +210,7 @@ def test_extension_on_an_untargeted_namespace_is_inert():
 @pytest.mark.parametrize("expires", [None, "2026-11", "next week"])
 def test_extension_with_a_bad_date_is_invalid_and_inert(expires):
     e = extension("e", "a", expires, gpu="8", memory="x")
-    custom = FakeCustom(config(managedNamespaces=SELECTOR), base(gpu="1"), e)
+    custom = FakeCustom(config(managedNamespaces=SELECTOR, baseResources=dict(gpu="1")), e)
     core = FakeCore([namespace("a")])
     events = run_once(core, custom, now=NOW)
     conditions = custom.conditions("quotaextensions", "e")
@@ -225,8 +223,7 @@ def test_extension_with_a_bad_date_is_invalid_and_inert(expires):
 
 def test_expired_extension_is_deleted_and_the_quota_drops_back():
     custom = FakeCustom(
-        config(managedNamespaces=SELECTOR),
-        base(gpu="1"),
+        config(managedNamespaces=SELECTOR, baseResources=dict(gpu="1")),
         extension("old", "a", "2026-11-07", gpu="8"),
         extension("live", "a", "2026-11-08", gpu="2"),
     )
@@ -241,8 +238,7 @@ def test_expired_extension_is_deleted_and_the_quota_drops_back():
 def test_expiry_is_observed_without_any_change():
     # the resync path: same objects, only the clock moved
     custom = FakeCustom(
-        config(managedNamespaces=SELECTOR),
-        base(gpu="1"),
+        config(managedNamespaces=SELECTOR, baseResources=dict(gpu="1")),
         extension("e", "a", "2026-11-08", gpu="8"),
     )
     core = FakeCore([namespace("a")])
@@ -308,16 +304,15 @@ def test_dry_run_reports_the_expired_extension_once_and_keeps_it():
 
 def test_override_issues_stay_off_the_base():
     custom = FakeCustom(
-        config(managedNamespaces=SELECTOR), base(cpu="1"), override("o", "a", cpu="x")
+        config(managedNamespaces=SELECTOR, baseResources=dict(cpu="1")), override("o", "a", cpu="x")
     )
     run_once(FakeCore([namespace("a")]), custom)
-    assert custom.conditions("quotabases", "default")["Valid"] == ("True", "")
+    assert custom.conditions("quotawardenconfigs", "default")["Valid"] == ("True", "")
 
 
 def test_override_gets_its_own_conditions():
     custom = FakeCustom(
-        config(managedNamespaces=SELECTOR),
-        base(cpu="1"),
+        config(managedNamespaces=SELECTOR, baseResources=dict(cpu="1")),
         override("o", "a", cpu="2", memory="x"),
     )
     run_once(FakeCore([namespace("a")]), custom)
@@ -328,11 +323,11 @@ def test_override_gets_its_own_conditions():
 
 def test_rejection_marks_only_the_source_of_the_key():
     custom = FakeCustom(
-        config(managedNamespaces=SELECTOR), base(cpu="1"), override("o", "a", bad="1")
+        config(managedNamespaces=SELECTOR, baseResources=dict(cpu="1")), override("o", "a", bad="1")
     )
     run_once(FakeCore([namespace("a")]), custom)
     assert custom.conditions("quotaoverrides", "o")["Applied"][0] == "False"
-    assert custom.conditions("quotabases", "default")["Applied"] == ("True", "")
+    assert custom.conditions("quotawardenconfigs", "default")["Applied"] == ("True", "")
 
 
 def test_override_without_a_base_gets_conditions():
@@ -373,30 +368,10 @@ def test_targeted_clears_once_the_namespace_is_managed():
     assert core.quotas["a", "quota-warden"].spec.hard == {"cpu": "1"}
 
 
-def test_the_base_is_whichever_quotabase_exists():
-    custom = FakeCustom(config(managedNamespaces=SELECTOR), base(name="anything", cpu="1"))
-    core = FakeCore([namespace("a")])
-    run_once(core, custom)
-    assert core.quotas["a", "quota-warden"].spec.hard == {"cpu": "1"}
-
-
-def test_two_bases_touch_nothing_and_set_a_condition():
-    custom = FakeCustom(
-        config(managedNamespaces=SELECTOR),
-        base(name="one", cpu="1"),
-        base(name="two", cpu="2"),
-    )
-    core = FakeCore([namespace("a")], {("a", "quota-warden"): quota({"cpu": "1"})})
-    events = run_once(core, custom)
-    assert core.writes == []
-    assert core.quotas["a", "quota-warden"].spec.hard == {"cpu": "1"}
-    condition = custom.conditions("quotawardenconfigs", "default")["Ready"]
-    assert condition[0] == "False" and "one, two" in condition[1]
-    assert [(e.type, e.reason) for e in events] == [("Warning", "BaseError")]
-
-
 def test_dry_run_reports_each_pending_change_once():
-    custom = FakeCustom(config(managedNamespaces=SELECTOR, dryRun=True), base(cpu="1"))
+    custom = FakeCustom(
+        config(managedNamespaces=SELECTOR, dryRun=True, baseResources=dict(cpu="1"))
+    )
     core = FakeCore([namespace("a")])
     state = State()
     events = run_once(core, custom, state=state)
@@ -406,14 +381,16 @@ def test_dry_run_reports_each_pending_change_once():
     assert dry[0].message == "dry run: would apply quota-warden: cpu=1"
     assert core.writes == [] and core.quotas == {}
     assert run_once(core, custom, state=state) == []
-    custom.objects["quotabases", "default"]["spec"]["resources"] = {"cpu": "2"}
+    custom.objects["quotawardenconfigs", "default"]["spec"]["baseResources"] = {"cpu": "2"}
     assert [e.message for e in run_once(core, custom, state=state)] == [
         "dry run: would apply quota-warden: cpu=2"
     ]
 
 
 def test_dry_run_event_names_orphans():
-    custom = FakeCustom(config(managedNamespaces=SELECTOR, dryRun=True), base(cpu="1"))
+    custom = FakeCustom(
+        config(managedNamespaces=SELECTOR, dryRun=True, baseResources=dict(cpu="1"))
+    )
     core = FakeCore(
         [namespace("a")],
         {
@@ -429,10 +406,11 @@ def test_dry_run_event_names_orphans():
 
 def test_dry_run_sets_applied_reason():
     custom = FakeCustom(
-        config(managedNamespaces=SELECTOR, dryRun=True), base(cpu="1"), override("o", "a", cpu="2")
+        config(managedNamespaces=SELECTOR, dryRun=True, baseResources=dict(cpu="1")),
+        override("o", "a", cpu="2"),
     )
     run_once(FakeCore([namespace("a")]), custom)
-    for plural, name in (("quotabases", "default"), ("quotaoverrides", "o")):
+    for plural, name in (("quotawardenconfigs", "default"), ("quotaoverrides", "o")):
         applied = custom.objects[plural, name]["status"]["conditions"]
         assert {c["type"]: c["reason"] for c in applied}["Applied"] == "DryRun"
 
@@ -459,7 +437,7 @@ def test_standing_config_error_logs_once_then_debug(caplog):
     run_once(FakeCore([]), custom, state=state)
     infos = [r.message for r in caplog.records if r.levelno == logging.INFO]
     assert "config 'default' loaded" in infos
-    assert "no QuotaBase; no defaults" in infos
+    assert "no baseResources; no defaults" in infos
 
 
 class Stopped:
@@ -699,7 +677,9 @@ def quota_events(events):
 def test_writes_are_evented_on_the_quota_with_what_changed():
     live = {("a", "quota-warden"): quota({"cpu": "1", "memory": "1Gi", "pods": "1"})}
     core = FakeCore([namespace("a")], live)
-    custom = FakeCustom(config(managedNamespaces=SELECTOR), base(cpu="2", memory="1024Mi", gpu="1"))
+    custom = FakeCustom(
+        config(managedNamespaces=SELECTOR, baseResources=dict(cpu="2", memory="1024Mi", gpu="1"))
+    )
     events = run_once(core, custom)
     assert quota_events(events) == [
         ("a", "uid-1", "Applied", "cpu 1→2, gpu 1 (new), pods 1 (removed)")
@@ -709,7 +689,7 @@ def test_writes_are_evented_on_the_quota_with_what_changed():
 
 def test_a_provenance_only_write_says_so():
     core = FakeCore([namespace("a")], {("a", "quota-warden"): quota({"cpu": "1"})})
-    custom = FakeCustom(config(managedNamespaces=SELECTOR), base(cpu="1"))
+    custom = FakeCustom(config(managedNamespaces=SELECTOR, baseResources=dict(cpu="1")))
     events = run_once(core, custom)
     assert quota_events(events) == [("a", "uid-1", "Applied", "sources changed, values unchanged")]
 
@@ -721,7 +701,9 @@ def test_deleting_the_quota_is_evented():
 
 
 def test_dry_run_posts_no_quota_events():
-    custom = FakeCustom(config(managedNamespaces=SELECTOR, dryRun=True), base(cpu="1"))
+    custom = FakeCustom(
+        config(managedNamespaces=SELECTOR, dryRun=True, baseResources=dict(cpu="1"))
+    )
     assert quota_events(run_once(FakeCore([namespace("a")]), custom)) == []
 
 
@@ -735,7 +717,7 @@ def namespace_events(events, reason):
 
 def test_foreign_quota_is_a_condition_and_one_warning():
     core = FakeCore([namespace("a")], {("a", "legacy"): quota({"cpu": "9"}, labels={})})
-    custom = FakeCustom(config(managedNamespaces=SELECTOR), base(cpu="1"))
+    custom = FakeCustom(config(managedNamespaces=SELECTOR, baseResources=dict(cpu="1")))
     state = State()
     events = run_once(core, custom, state=state)
     assert custom.conditions("quotawardenconfigs", "default")["Exclusive"] == (
@@ -754,9 +736,9 @@ def test_foreign_quota_is_a_condition_and_one_warning():
 
 def test_blocked_namespace_marks_its_sources():
     live = {("a", "quota-warden"): quota({"cpu": "9"}, labels={})}
-    custom = FakeCustom(config(managedNamespaces=SELECTOR), base(cpu="1"))
+    custom = FakeCustom(config(managedNamespaces=SELECTOR, baseResources=dict(cpu="1")))
     events = run_once(FakeCore([namespace("a")], live), custom)
-    applied = custom.conditions("quotabases", "default")["Applied"]
+    applied = custom.conditions("quotawardenconfigs", "default")["Applied"]
     assert applied[0] == "False" and applied[1].startswith("a: a foreign ResourceQuota")
     assert "nothing is written" in namespace_events(events, "ForeignQuota")[0][2]
 
@@ -764,7 +746,9 @@ def test_blocked_namespace_marks_its_sources():
 def test_deleted_foreign_quota_is_evented():
     core = FakeCore([namespace("a")], {("a", "legacy"): quota({"cpu": "9"}, labels={})})
     custom = FakeCustom(
-        config(managedNamespaces=SELECTOR, foreignResourceQuotas="delete"), base(cpu="1")
+        config(
+            managedNamespaces=SELECTOR, foreignResourceQuotas="delete", baseResources=dict(cpu="1")
+        )
     )
     events = run_once(core, custom)
     assert namespace_events(events, "ForeignQuotaDeleted") == [
@@ -777,8 +761,12 @@ def test_deleted_foreign_quota_is_evented():
 def test_dry_run_delete_reports_what_it_would_delete():
     core = FakeCore([namespace("a")], {("a", "legacy"): quota({"cpu": "9"}, labels={})})
     custom = FakeCustom(
-        config(managedNamespaces=SELECTOR, foreignResourceQuotas="delete", dryRun=True),
-        base(cpu="1"),
+        config(
+            managedNamespaces=SELECTOR,
+            foreignResourceQuotas="delete",
+            dryRun=True,
+            baseResources=dict(cpu="1"),
+        ),
     )
     events = run_once(core, custom)
     assert "would delete foreign legacy" in namespace_events(events, "DryRun")[0][2]
@@ -793,7 +781,9 @@ def test_dry_run_delete_reports_what_it_would_delete():
 def test_ignore_mode_reports_nothing():
     core = FakeCore([namespace("a")], {("a", "legacy"): quota({"cpu": "9"}, labels={})})
     custom = FakeCustom(
-        config(managedNamespaces=SELECTOR, foreignResourceQuotas="ignore"), base(cpu="1")
+        config(
+            managedNamespaces=SELECTOR, foreignResourceQuotas="ignore", baseResources=dict(cpu="1")
+        )
     )
     events = run_once(core, custom)
     assert namespace_events(events, "ForeignQuota") == []
@@ -822,7 +812,7 @@ def test_quota_events_count_only_what_a_sweep_reads():
 def test_unmanage_deletes_with_a_warning_and_keeps_the_sources():
     core = FakeCore([namespace("a", managed=False)], {("a", "quota-warden"): quota({"cpu": "2"})})
     custom = FakeCustom(
-        config(managedNamespaces=SELECTOR), base(cpu="1"), override("a", "a", cpu="2")
+        config(managedNamespaces=SELECTOR, baseResources=dict(cpu="1")), override("a", "a", cpu="2")
     )
     events = run_once(core, custom)
     assert namespace_events(events, "Unmanaged") == [
@@ -840,7 +830,9 @@ def test_unmanage_deletes_with_a_warning_and_keeps_the_sources():
 
 def test_unmanage_retain_warns_once():
     core = FakeCore([namespace("a", managed=False)], {("a", "quota-warden"): quota({"cpu": "2"})})
-    custom = FakeCustom(config(managedNamespaces=SELECTOR, onUnmanage="retain"), base(cpu="1"))
+    custom = FakeCustom(
+        config(managedNamespaces=SELECTOR, onUnmanage="retain", baseResources=dict(cpu="1"))
+    )
     state = State()
     [(_, kind, message)] = namespace_events(run_once(core, custom, state=state), "Unmanaged")
     assert kind == "Warning" and message.endswith("quota-warden retained and still binds")
@@ -850,7 +842,9 @@ def test_unmanage_retain_warns_once():
 
 def test_unmanage_under_dry_run_is_reported_not_done():
     core = FakeCore([namespace("a", managed=False)], {("a", "quota-warden"): quota({"cpu": "2"})})
-    custom = FakeCustom(config(managedNamespaces=SELECTOR, dryRun=True), base(cpu="1"))
+    custom = FakeCustom(
+        config(managedNamespaces=SELECTOR, dryRun=True, baseResources=dict(cpu="1"))
+    )
     events = run_once(core, custom)
     assert namespace_events(events, "Unmanaged") == []
     assert namespace_events(events, "DryRun") == [
