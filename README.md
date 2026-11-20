@@ -157,6 +157,7 @@ the sweep loop and deleting the last one stops it, with no restart either way.
 | `dryRun`                | `false`        | report what would change; write and delete nothing                          |
 | `foreignResourceQuotas` | `report`       | see [Sources](#sources)                                                     |
 | `onUnmanage`            | `delete`       | see [Sources](#sources)                                                     |
+| `expiredRetentionDays`  | `0`            | days an expired extension is kept, `-1` forever; see [Sources](#sources)    |
 
 The selector takes `matchLabels` and `matchExpressions` with `In`, `NotIn`,
 `Exists` and `DoesNotExist`, as in a NetworkPolicy. A malformed expression is
@@ -186,8 +187,11 @@ Unset `baseResources` means no defaults; overrides and extensions still apply.
 The base's `Valid` and `Applied` are on the config; while it is `Ready=False`
 they are `Unknown`, and unsetting `baseResources` removes them.
 
-Expired `QuotaExtension`s are deleted by the operator, whatever namespace they
-target; under `dryRun` they are only reported.
+An expired `QuotaExtension` stops applying at once (`Applied=False`, `Expired`)
+and is deleted `expiredRetentionDays` days later, whatever namespace it targets;
+under `dryRun` it is only reported. Editing `expirationDate` before then renews
+it. `-1` never deletes: set it when extensions are kept in git, or the CD tool
+recreates what the operator deletes.
 
 A ResourceQuota in a managed namespace without the
 `app.kubernetes.io/managed-by: quota-warden` label is foreign: it still binds by
