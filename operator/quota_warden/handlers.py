@@ -72,12 +72,15 @@ def run_once(core, custom, state: State | None = None, now: datetime | None = No
             targets = [body]
         events = []
         for target in targets:
-            events += update(
-                custom,
-                "quotawardenconfigs",
-                target,
-                [Condition("Ready", "False", "ConfigError", str(exc))],
-            )
+            wanted = [Condition("Ready", "False", "ConfigError", str(exc))]
+            # the base is not evaluated; a stale Applied=True would claim it is in effect
+            present = {c.get("type") for c in (target.get("status") or {}).get("conditions") or []}
+            wanted += [
+                Condition(t, "Unknown", "ConfigError", "config not loaded; base not evaluated")
+                for t in ("Valid", "Applied")
+                if t in present
+            ]
+            events += update(custom, "quotawardenconfigs", target, wanted)
         return events
     ready = (
         Condition("Ready", "True", "DryRun", "dryRun is set; nothing is written")
