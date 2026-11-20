@@ -58,6 +58,7 @@ def config(**spec):
         "dryRun": False,
         "foreignResourceQuotas": "report",
         "onUnmanage": "delete",
+        "expiredRetentionDays": 0,
     }
     return {
         "plural": "quotawardenconfigs",

@@ -41,6 +41,7 @@ def test_config_defaults_are_stored(create):
         "dryRun": False,
         "foreignResourceQuotas": "report",
         "onUnmanage": "delete",
+        "expiredRetentionDays": 0,
     }
 
 
@@ -48,6 +49,12 @@ def test_config_defaults_are_stored(create):
 def test_config_rejects_an_unknown_mode(create, field):
     with pytest.raises(ApiException) as exc:
         create("quotawardenconfigs", "e2e-bad-mode", {field: "bogus"})
+    assert exc.value.status == 422
+
+
+def test_config_rejects_a_retention_below_minus_one(create):
+    with pytest.raises(ApiException) as exc:
+        create("quotawardenconfigs", "e2e-bad-retention", {"expiredRetentionDays": -2})
     assert exc.value.status == 422
 
 

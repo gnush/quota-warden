@@ -88,6 +88,12 @@ spec:
                   type: string
                   enum: [delete, retain]
                   default: delete
+                # days an expired QuotaExtension is kept before deletion; -1 keeps it,
+                # e.g. when a CD tool would recreate it
+                expiredRetentionDays:
+                  type: integer
+                  minimum: -1
+                  default: 0
             status:
               type: object
               x-kubernetes-preserve-unknown-fields: true

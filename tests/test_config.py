@@ -10,6 +10,7 @@ DEFAULTS = {
     "dryRun": False,
     "foreignResourceQuotas": "report",
     "onUnmanage": "delete",
+    "expiredRetentionDays": 0,
 }
 
 
@@ -26,6 +27,10 @@ def test_load():
 def test_load_reads_the_sole_authority_settings():
     config = load(body(managedNamespaces={}, foreignResourceQuotas="delete", onUnmanage="retain"))
     assert (config.foreign_resource_quotas, config.on_unmanage) == ("delete", "retain")
+
+
+def test_load_reads_the_retention():
+    assert load(body(managedNamespaces={}, expiredRetentionDays=-1)).expired_retention_days == -1
 
 
 def test_missing_config_is_an_error():

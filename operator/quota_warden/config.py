@@ -26,6 +26,8 @@ class Config:
     dry_run: bool
     foreign_resource_quotas: Literal["report", "delete", "ignore"]
     on_unmanage: Literal["delete", "retain"]
+    # -1 never deletes
+    expired_retention_days: int
     base_resources: dict | None = None
 
 
@@ -50,6 +52,7 @@ def load(body: dict | None) -> Config:
             spec["dryRun"],
             spec["foreignResourceQuotas"],
             spec["onUnmanage"],
+            spec["expiredRetentionDays"],
             spec.get("baseResources"),
         )
     except KeyError as exc:

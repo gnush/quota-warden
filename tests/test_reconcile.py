@@ -10,7 +10,7 @@ from quota_warden.config import Config
 from quota_warden.reconcile import FIELD_MANAGER, MANAGED_BY, PROVENANCE, sweep
 
 SELECTOR = {"matchLabels": {"managed": "yes"}}
-CONFIG = Config({"managedNamespaces": SELECTOR}, "quota-warden", False, "report", "delete")
+CONFIG = Config({"managedNamespaces": SELECTOR}, "quota-warden", False, "report", "delete", 0)
 OWNED = dict([MANAGED_BY])
 
 
@@ -225,7 +225,7 @@ def test_other_api_errors_propagate():
         run(core, base(cpu="1"))
 
 
-DRY = Config(CONFIG.spec, "quota-warden", True, "report", "delete")
+DRY = Config(CONFIG.spec, "quota-warden", True, "report", "delete", 0)
 
 
 def test_dry_run_validates_on_the_server_and_stores_nothing():
