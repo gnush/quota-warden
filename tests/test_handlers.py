@@ -336,6 +336,24 @@ def test_override_issues_stay_off_the_base():
     assert custom.conditions("quotawardenconfigs", "default")["Valid"] == ("True", "")
 
 
+def test_sources_sharing_a_name_keep_their_own_conditions():
+    custom = FakeCustom(
+        config(managedNamespaces=SELECTOR, baseResources=dict(bad="1")),
+        override("default", "default", cpu="x"),
+        extension("default", "default", "2026-11-08", memory="y"),
+    )
+    run_once(FakeCore([namespace("default")]), custom, now=NOW)
+    base = custom.conditions("quotawardenconfigs", "default")
+    o = custom.conditions("quotaoverrides", "default")
+    e = custom.conditions("quotaextensions", "default")
+    assert base["Valid"] == ("True", "")
+    assert o["Valid"][1].startswith("cpu: ") and "memory" not in o["Valid"][1]
+    assert e["Valid"][1].startswith("memory: ") and "cpu" not in e["Valid"][1]
+    # only the base set the rejected key
+    assert base["Applied"][0] == "False"
+    assert o["Applied"][0] == e["Applied"][0] == "True"
+
+
 def test_override_gets_its_own_conditions():
     custom = FakeCustom(
         config(managedNamespaces=SELECTOR, baseResources=dict(cpu="1")),

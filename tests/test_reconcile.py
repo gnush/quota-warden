@@ -203,7 +203,9 @@ def test_invalid_value_is_dropped_and_reported():
     core = FakeCore([namespace("a")])
     results, issues = run(core, base(cpu="1", memory="-1"))
     assert core.quotas["a", "quota-warden"].spec.hard == {"cpu": "1"}
-    assert [(i.kind, i.source, i.key) for i in issues] == [("invalid", "default", "memory")]
+    assert [(i.kind, i.source, i.key) for i in issues] == [
+        ("invalid", ("base", "default"), "memory")
+    ]
 
 
 def test_rejected_write_keeps_the_last_quota_and_carries_the_message():
@@ -376,10 +378,10 @@ def test_issues_are_reported_once_including_inert_overrides():
     ]
     _, issues = run(core, base(memory="z"), overrides)
     assert sorted((i.source, i.key) for i in issues) == [
-        ("a-o", "cpu"),
-        ("c-o", "cpu"),
-        ("default", "memory"),
-        ("gone-o", "cpu"),
+        (("base", "default"), "memory"),
+        (("override", "a-o"), "cpu"),
+        (("override", "c-o"), "cpu"),
+        (("override", "gone-o"), "cpu"),
     ]
 
 
@@ -403,13 +405,13 @@ def test_skipped_namespaces_carry_the_reason():
 def test_rejection_is_blamed_on_the_override_that_set_the_key():
     core = FakeCore([namespace("a")])
     results, _ = run(core, base(cpu="1", bad="1"), [override("o", "a", bad="2")])
-    assert results["a"].blame == ("o",)
+    assert results["a"].blame == (("override", "o"),)
 
 
 def test_rejection_of_a_base_key_is_blamed_on_the_base():
     core = FakeCore([namespace("a")])
     results, _ = run(core, base(bad="1"), [override("o", "a", cpu="2")])
-    assert results["a"].blame == ("default",)
+    assert results["a"].blame == (("base", "default"),)
 
 
 def test_rejection_naming_no_key_is_blamed_on_every_contributor():
@@ -418,7 +420,7 @@ def test_rejection_naming_no_key_is_blamed_on_every_contributor():
             raise ApiException(status=422, body=json.dumps({"message": "invalid"}))
 
     results, _ = run(Unnamed([namespace("a")]), base(cpu="1"), [override("o", "a", cpu="2")])
-    assert results["a"].blame == ("default", "o")
+    assert results["a"].blame == (("base", "default"), ("override", "o"))
 
 
 def test_extension_adds_on_top_of_the_override():
@@ -468,7 +470,12 @@ def test_issues_include_inert_and_inactive_extensions():
         extension("old-e", "a", expires="2026-01-01", cpu="w"),
     ]
     _, issues = run(core, base(), [], extensions)
-    assert sorted(i.source for i in issues) == ["a-e", "c-e", "gone-e", "old-e"]
+    assert sorted(name for _, name in (i.source for i in issues)) == [
+        "a-e",
+        "c-e",
+        "gone-e",
+        "old-e",
+    ]
 
 
 def test_rejection_is_blamed_on_the_replace_layer_and_the_extension():
@@ -479,7 +486,7 @@ def test_rejection_is_blamed_on_the_replace_layer_and_the_extension():
         [override("o", "a", cpu="2")],
         [extension("e", "a", bad="1"), extension("other", "a", cpu="1")],
     )
-    assert results["a"].blame == ("default", "e")
+    assert results["a"].blame == (("base", "default"), ("extension", "e"))
 
 
 def test_provenance_is_written_with_the_quota():
@@ -520,7 +527,11 @@ def test_foreign_quota_under_our_name_blocks_the_write(mode, foreign):
     live = {("a", "quota-warden"): quota({"cpu": "9"}, labels={})}
     core = FakeCore([namespace("a")], live)
     [result], _ = sweep(core, base(cpu="1"), [], [], with_mode(mode), NOW)
-    assert (result.action, result.foreign, result.blame) == ("blocked", foreign, ("default",))
+    assert (result.action, result.foreign, result.blame) == (
+        "blocked",
+        foreign,
+        (("base", "default"),),
+    )
     assert core.writes == []
 
 

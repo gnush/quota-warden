@@ -8,23 +8,30 @@ from typing import Literal
 
 from .quantity import QuantityError, add, parse
 
+Role = Literal["base", "override", "extension"]
+# (role, name): names alone collide across kinds, e.g. an override and an extension both "a"
+Source = tuple[Role, str]
+
+
+def source_id(role: Role, source: dict) -> Source:
+    return role, source.get("metadata", {}).get("name", "")
+
 
 @dataclass(frozen=True)
 class Issue:
     kind: Literal["invalid"]
-    source: str
+    source: Source
     key: str
     message: str
 
 
-def _resources(source: dict, issues: list[Issue]) -> dict[str, Decimal]:
-    name = source.get("metadata", {}).get("name", "")
+def _resources(source: dict, role: Role, issues: list[Issue]) -> dict[str, Decimal]:
     parsed = {}
     for key, value in (source.get("spec", {}).get("resources") or {}).items():
         try:
             parsed[key] = parse(value)
         except QuantityError as exc:
-            issues.append(Issue("invalid", name, key, str(exc)))
+            issues.append(Issue("invalid", source_id(role, source), key, str(exc)))
     return parsed
 
 
@@ -54,10 +61,10 @@ def merge(
     base: dict, override: dict | None, extensions: list[dict]
 ) -> tuple[dict[str, Decimal], list[Issue]]:
     issues: list[Issue] = []
-    merged = _resources(base, issues)
-    merged |= _resources(override or {}, issues)
+    merged = _resources(base, "base", issues)
+    merged |= _resources(override or {}, "override", issues)
     for extension in extensions:
-        for key, value in _resources(extension, issues).items():
+        for key, value in _resources(extension, "extension", issues).items():
             merged[key] = add(merged.get(key, Decimal(0)), value)
 
     return merged, issues
@@ -66,7 +73,7 @@ def merge(
 def _written(source: dict) -> dict[str, str]:
     """Valid keys as written in the source, for a reader to find them there."""
     resources = source.get("spec", {}).get("resources") or {}
-    return {key: str(resources[key]) for key in _resources(source, [])}
+    return {key: str(resources[key]) for key in _resources(source, "base", [])}
 
 
 def provenance(base: dict, override: dict | None, extensions: list[dict]) -> dict[str, dict]:

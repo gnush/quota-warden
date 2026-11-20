@@ -19,7 +19,7 @@ from kubernetes.utils.quantity import parse_quantity
 
 from .conditions import Condition, Event, update
 from .config import ConfigError, load, resync_interval
-from .merge import expires_at
+from .merge import expires_at, source_id
 from .quantity import format_quantity
 from .reconcile import GROUP, expired, list_objects, reap, singleton, sweep
 
@@ -95,7 +95,6 @@ def run_once(core, custom, state: State | None = None, now: datetime | None = No
 
     base = None
     if config.base_resources is not None:
-        # a merge source, named after the config so issues and blame land on it
         base = {"metadata": body["metadata"], "spec": {"resources": config.base_resources}}
     state.log(
         "base", logging.INFO, "baseResources set" if base else "no baseResources; no defaults"
@@ -106,7 +105,7 @@ def run_once(core, custom, state: State | None = None, now: datetime | None = No
     wanted = [ready, _exclusive(results, config)]
     drop = frozenset()
     if base is not None:
-        wanted += _source_conditions(base, issues, results, config.dry_run)
+        wanted += _source_conditions(base, "base", issues, results, config.dry_run)
     else:
         # left from a removed baseResources, they would report a base that is gone
         drop = frozenset({"Valid", "Applied"})
@@ -128,7 +127,7 @@ def run_once(core, custom, state: State | None = None, now: datetime | None = No
     skipped = {r.namespace: r.reason for r in results if r.action == "skipped"}
     listed = {r.namespace for r in results}
     for override in overrides:
-        wanted = _source_conditions(override, issues, results, config.dry_run)
+        wanted = _source_conditions(override, "override", issues, results, config.dry_run)
         wanted = _targeted(override, wanted, skipped, listed, "override")
         events += update(custom, "quotaoverrides", override, wanted)
     reaped, reap_events = _reap(custom, expired(extensions, now), state, config.dry_run)
@@ -137,7 +136,7 @@ def run_once(core, custom, state: State | None = None, now: datetime | None = No
         # deleted: a status patch would 404 and its events name a gone object
         if extension["metadata"]["name"] in reaped:
             continue
-        wanted = _source_conditions(extension, issues, results, config.dry_run)
+        wanted = _source_conditions(extension, "extension", issues, results, config.dry_run)
         wanted = _targeted(extension, wanted, skipped, listed, "extension")
         wanted = _expiry(extension, wanted, now)
         events += update(custom, "quotaextensions", extension, wanted)
@@ -203,8 +202,8 @@ def _expiry(extension: dict, wanted, now) -> list[Condition]:
     return [c for c in wanted if c.type not in types] + replaced
 
 
-def _source_conditions(source: dict, issues, results, dry_run: bool) -> list[Condition]:
-    name = source["metadata"]["name"]
+def _source_conditions(source: dict, role, issues, results, dry_run: bool) -> list[Condition]:
+    name = source_id(role, source)
     invalid = "; ".join(
         f"{i.key}: {i.message}" for i in issues if i.kind == "invalid" and i.source == name
     )

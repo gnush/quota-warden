@@ -11,7 +11,7 @@ from kubernetes.client.exceptions import ApiException
 from kubernetes.utils.quantity import parse_quantity
 
 from .config import Config
-from .merge import Issue, expires_at, is_active, merge, provenance
+from .merge import Issue, Source, expires_at, is_active, merge, provenance, source_id
 from .quantity import format_quantity
 from .targeting import is_managed, is_protected
 
@@ -36,7 +36,7 @@ class Result:
     # action and orphans describe what a real run would do; nothing was stored
     dry_run: bool = False
     # sources a rejection is attributed to
-    blame: tuple[str, ...] = ()
+    blame: tuple[Source, ...] = ()
     # why a namespace was skipped: Unmanaged, Protected or Terminating
     reason: str = ""
     # spec.hard of the owned quota before an applied or deleted write
@@ -163,23 +163,25 @@ _REJECTED_KEY = re.compile(r"spec\.hard\[([^\]]+)\]")
 
 def _blame(
     error: str, base: dict | None, override: dict | None, extensions: list[dict]
-) -> tuple[str, ...]:
+) -> tuple[Source, ...]:
     """The sources that set the rejected keys; every contributor if none can be named."""
-
-    def name(source):
-        return source.get("metadata", {}).get("name", "")
 
     def keys(source):
         return (source.get("spec", {}).get("resources") or {}).keys()
 
     blamed = []
     for key in dict.fromkeys(_REJECTED_KEY.findall(error)):
-        layer = override if override is not None and key in keys(override) else base
-        setters = [name(layer)] if layer is not None and key in keys(layer) else []
+        if override is not None and key in keys(override):
+            blamed.append(source_id("override", override))
+        elif base is not None and key in keys(base):
+            blamed.append(source_id("base", base))
         # extensions add on top of whichever replace layer set the key
-        blamed += setters + [name(e) for e in extensions if key in keys(e)]
+        blamed += [source_id("extension", e) for e in extensions if key in keys(e)]
     if not blamed:
-        blamed = [name(s) for s in [base, override, *extensions] if s is not None]
+        blamed = [source_id("base", base)] if base is not None else []
+        if override is not None:
+            blamed.append(source_id("override", override))
+        blamed += [source_id("extension", e) for e in extensions]
     return tuple(dict.fromkeys(blamed))
 
 

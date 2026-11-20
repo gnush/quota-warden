@@ -75,9 +75,9 @@ def test_invalid_value_dropped_for_that_key_only():
     merged, issues = merge(BASE, override, [source("a-boost", cpu=1.5)])
     assert merged == q(cpu="18", memory="130Gi", requests_storage="300Gi", pods="0")
     assert {(i.kind, i.source, i.key) for i in issues} == {
-        ("invalid", "a-override", "cpu"),
-        ("invalid", "a-override", "memory"),
-        ("invalid", "a-boost", "cpu"),
+        ("invalid", ("override", "a-override"), "cpu"),
+        ("invalid", ("override", "a-override"), "memory"),
+        ("invalid", ("extension", "a-boost"), "cpu"),
     }
     assert all(isinstance(i, Issue) and i.message for i in issues)
 
