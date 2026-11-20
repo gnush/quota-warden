@@ -16,7 +16,7 @@ from kubernetes import client
 from kubernetes.client.exceptions import ApiException
 from kubernetes.utils.quantity import parse_quantity
 
-from conftest import GROUP, VERSION, delete, exists, wait_for
+from conftest import GROUP, VERSION, WARDEN, delete, exists, wait_for
 
 NAMESPACE = "quota-warden"
 DEPLOYMENT = "quota-warden"
@@ -47,9 +47,10 @@ def q(**values):
 
 def set_base(custom, **resources):
     # JSON patch: a merge patch would keep keys left out of `resources`
-    custom.patch_cluster_custom_object(
+    custom.patch_namespaced_custom_object(
         GROUP,
         VERSION,
+        WARDEN,
         "quotawardenconfigs",
         CONFIG,
         [{"op": "add", "path": "/spec/baseResources", "value": resources}],
@@ -58,8 +59,8 @@ def set_base(custom, **resources):
 
 
 def unset_base(custom):
-    custom.patch_cluster_custom_object(
-        GROUP, VERSION, "quotawardenconfigs", CONFIG, {"spec": {"baseResources": None}}
+    custom.patch_namespaced_custom_object(
+        GROUP, VERSION, WARDEN, "quotawardenconfigs", CONFIG, {"spec": {"baseResources": None}}
     )
 
 
@@ -74,9 +75,10 @@ def operator(api, custom):
         delete(api.delete_namespace, name)
     api.create_namespace({"metadata": {"name": TARGET, "labels": MANAGED_LABEL}})
     api.create_namespace({"metadata": {"name": OTHER}})
-    custom.create_cluster_custom_object(
+    custom.create_namespaced_custom_object(
         GROUP,
         VERSION,
+        WARDEN,
         "quotawardenconfigs",
         {
             "apiVersion": f"{GROUP}/{VERSION}",
@@ -87,7 +89,9 @@ def operator(api, custom):
     )
     set_base(custom, cpu="2", memory="1Gi")
     yield start
-    delete(custom.delete_cluster_custom_object, GROUP, VERSION, "quotawardenconfigs", CONFIG)
+    delete(
+        custom.delete_namespaced_custom_object, GROUP, VERSION, WARDEN, "quotawardenconfigs", CONFIG
+    )
     for name in (TARGET, OTHER):
         delete(api.delete_namespace, name)
 
@@ -255,20 +259,21 @@ def test_status_conditions_are_patched(api, custom, operator):
     """*/status: patch, on the config the operator loads first."""
 
     def ready():
-        status = custom.get_cluster_custom_object(GROUP, VERSION, "quotawardenconfigs", CONFIG).get(
-            "status", {}
-        )
+        status = custom.get_namespaced_custom_object(
+            GROUP, VERSION, WARDEN, "quotawardenconfigs", CONFIG
+        ).get("status", {})
         return {c["type"]: c for c in status.get("conditions", [])}.get("Ready")
 
     assert wait_for(lambda: ready() and ready()["status"] == "True"), ready()
 
 
 def test_an_expired_extension_is_deleted(api, custom, operator):
-    """quotaextensions: delete — the reaper, on the cluster-scoped kind."""
+    """quotaextensions: delete — the reaper."""
     name = "e2e-deployment-expired"
-    custom.create_cluster_custom_object(
+    custom.create_namespaced_custom_object(
         GROUP,
         VERSION,
+        WARDEN,
         "quotaextensions",
         {
             "apiVersion": f"{GROUP}/{VERSION}",
@@ -283,7 +288,9 @@ def test_an_expired_extension_is_deleted(api, custom, operator):
     )
     assert wait_for(
         lambda: (
-            not exists(custom.get_cluster_custom_object, GROUP, VERSION, "quotaextensions", name)
+            not exists(
+                custom.get_namespaced_custom_object, GROUP, VERSION, WARDEN, "quotaextensions", name
+            )
         )
     )
     # past its date when the first sweep saw it, so it was never applied
@@ -302,8 +309,8 @@ def test_an_event_is_written_on_the_quota(api, custom, operator):
 def test_an_event_about_a_cluster_scoped_object_lands_in_default(api, custom, operator):
     """events: create in `default` — kopf's fallback when it has no namespace."""
     before = uids(namespace_events(api, TARGET, "DryRun"))
-    custom.patch_cluster_custom_object(
-        GROUP, VERSION, "quotawardenconfigs", CONFIG, {"spec": {"dryRun": True}}
+    custom.patch_namespaced_custom_object(
+        GROUP, VERSION, WARDEN, "quotawardenconfigs", CONFIG, {"spec": {"dryRun": True}}
     )
     try:
         set_base(custom, cpu="4", memory="1Gi")
@@ -315,8 +322,8 @@ def test_an_event_about_a_cluster_scoped_object_lands_in_default(api, custom, op
         # dry run: reported, not written
         assert hard(api) == q(cpu="3", memory="1Gi")
     finally:
-        custom.patch_cluster_custom_object(
-            GROUP, VERSION, "quotawardenconfigs", CONFIG, {"spec": {"dryRun": False}}
+        custom.patch_namespaced_custom_object(
+            GROUP, VERSION, WARDEN, "quotawardenconfigs", CONFIG, {"spec": {"dryRun": False}}
         )
     assert wait_for(lambda: hard(api) == q(cpu="4", memory="1Gi")), hard(api)
 

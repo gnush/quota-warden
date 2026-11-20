@@ -14,7 +14,7 @@ import pytest
 from kubernetes.client.exceptions import ApiException
 from kubernetes.utils.quantity import parse_quantity
 
-from conftest import GROUP, LABEL, MANAGED_LABEL, VERSION, delete, exists, wait_for
+from conftest import GROUP, LABEL, MANAGED_LABEL, VERSION, WARDEN, delete, exists, wait_for
 
 CONFIG = "e2e"
 QUOTA = "quota-warden"
@@ -56,9 +56,10 @@ def operator(api, custom, tmp_path_factory):
     wait_for(lambda: not exists(api.read_namespace, NAMESPACE), timeout=120)
     process = Operator(kubeconfig)
     try:
-        custom.create_cluster_custom_object(
+        custom.create_namespaced_custom_object(
             GROUP,
             VERSION,
+            WARDEN,
             "quotawardenconfigs",
             {
                 "apiVersion": f"{GROUP}/{VERSION}",
@@ -78,15 +79,23 @@ def operator(api, custom, tmp_path_factory):
         if process.poll() is None:
             # the operator removes its own quotas once the base is gone
             wait_for(lambda: hard(api) is None and hard(api, "quota-user-a") is None)
-        delete(custom.delete_cluster_custom_object, GROUP, VERSION, "quotawardenconfigs", CONFIG)
+        delete(
+            custom.delete_namespaced_custom_object,
+            GROUP,
+            VERSION,
+            WARDEN,
+            "quotawardenconfigs",
+            CONFIG,
+        )
         if process.poll() is None:
             # kopf removes the sweep daemon's finalizer only while running
             wait_for(
                 lambda: (
                     not exists(
-                        custom.get_cluster_custom_object,
+                        custom.get_namespaced_custom_object,
                         GROUP,
                         VERSION,
+                        WARDEN,
                         "quotawardenconfigs",
                         CONFIG,
                     )
@@ -117,7 +126,7 @@ class Operator:
                 env={
                     **os.environ,
                     "KUBECONFIG": str(self.kubeconfig),
-                    "QUOTA_WARDEN_NAMESPACE": "quota-warden",
+                    "QUOTA_WARDEN_NAMESPACE": WARDEN,
                 },
                 stdout=out,
                 stderr=subprocess.STDOUT,
@@ -139,8 +148,8 @@ class Operator:
 
 
 def unset_base(custom):
-    custom.patch_cluster_custom_object(
-        GROUP, VERSION, "quotawardenconfigs", CONFIG, {"spec": {"baseResources": None}}
+    custom.patch_namespaced_custom_object(
+        GROUP, VERSION, WARDEN, "quotawardenconfigs", CONFIG, {"spec": {"baseResources": None}}
     )
 
 
@@ -150,9 +159,10 @@ def base(custom, operator):
 
     def _set(**resources):
         # JSON patch: a merge patch would keep keys left out of `resources`
-        custom.patch_cluster_custom_object(
+        custom.patch_namespaced_custom_object(
             GROUP,
             VERSION,
+            WARDEN,
             "quotawardenconfigs",
             CONFIG,
             [{"op": "add", "path": "/spec/baseResources", "value": resources}],
@@ -167,9 +177,9 @@ def label(api, value):
 
 
 def conditions_of(custom):
-    status = custom.get_cluster_custom_object(GROUP, VERSION, "quotawardenconfigs", CONFIG).get(
-        "status", {}
-    )
+    status = custom.get_namespaced_custom_object(
+        GROUP, VERSION, WARDEN, "quotawardenconfigs", CONFIG
+    ).get("status", {})
     return {c["type"]: c for c in status.get("conditions", [])}
 
 
@@ -205,15 +215,17 @@ def test_a_sweep_with_nothing_to_change_writes_nothing(api, custom, base):
     # the base's conditions are patched onto the config after the quota write
     wait_for(lambda: conditions_of(custom).get("Applied", {}).get("status") == "True")
     quota = api.read_namespaced_resource_quota(QUOTA, NAMESPACE).metadata.resource_version
-    config = custom.get_cluster_custom_object(GROUP, VERSION, "quotawardenconfigs", CONFIG)
+    config = custom.get_namespaced_custom_object(
+        GROUP, VERSION, WARDEN, "quotawardenconfigs", CONFIG
+    )
     # an annotation is a watch event, so it requests a sweep, but changes nothing it reads
     api.patch_namespace(NAMESPACE, {"metadata": {"annotations": {"e2e/poke": str(time.time())}}})
     time.sleep(3)
     assert api.read_namespaced_resource_quota(QUOTA, NAMESPACE).metadata.resource_version == quota
     assert (
-        custom.get_cluster_custom_object(GROUP, VERSION, "quotawardenconfigs", CONFIG)["metadata"][
-            "resourceVersion"
-        ]
+        custom.get_namespaced_custom_object(GROUP, VERSION, WARDEN, "quotawardenconfigs", CONFIG)[
+            "metadata"
+        ]["resourceVersion"]
         == config["metadata"]["resourceVersion"]
     )
 
@@ -233,10 +245,11 @@ def test_malformed_selector_sets_the_condition_and_leaves_quotas(api, custom, ba
     label(api, MANAGED_LABEL[LABEL])
     base(cpu="4")
     wait_for(lambda: hard(api) == q(cpu="4"))
-    patch = custom.patch_cluster_custom_object
+    patch = custom.patch_namespaced_custom_object
     patch(
         GROUP,
         VERSION,
+        WARDEN,
         "quotawardenconfigs",
         CONFIG,
         selector({"matchExpressions": [{"key": "k", "operator": "Bogus"}]}),
@@ -249,9 +262,13 @@ def test_malformed_selector_sets_the_condition_and_leaves_quotas(api, custom, ba
         assert hard(api) == q(cpu="4")
     finally:
         # merge patch would keep matchExpressions next to the restored matchLabels
-        body = custom.get_cluster_custom_object(GROUP, VERSION, "quotawardenconfigs", CONFIG)
+        body = custom.get_namespaced_custom_object(
+            GROUP, VERSION, WARDEN, "quotawardenconfigs", CONFIG
+        )
         body["spec"]["managedNamespaces"] = {"matchLabels": MANAGED_LABEL}
-        custom.replace_cluster_custom_object(GROUP, VERSION, "quotawardenconfigs", CONFIG, body)
+        custom.replace_namespaced_custom_object(
+            GROUP, VERSION, WARDEN, "quotawardenconfigs", CONFIG, body
+        )
     assert wait_for(lambda: ready(custom)["status"] == "True")
     assert wait_for(lambda: hard(api) == q(cpu="8")), hard(api)
 
@@ -271,7 +288,9 @@ def test_dry_run_reports_on_the_namespace_and_writes_nothing(api, custom, base):
 
     def set_dry_run(value):
         patch = {"spec": {"dryRun": value}}
-        custom.patch_cluster_custom_object(GROUP, VERSION, "quotawardenconfigs", CONFIG, patch)
+        custom.patch_namespaced_custom_object(
+            GROUP, VERSION, WARDEN, "quotawardenconfigs", CONFIG, patch
+        )
 
     set_dry_run(True)
     try:
@@ -295,7 +314,9 @@ def test_renaming_the_quota_removes_the_old_one(api, custom, base):
 
     def rename(value):
         patch = {"spec": {"resourceQuotaName": value}}
-        custom.patch_cluster_custom_object(GROUP, VERSION, "quotawardenconfigs", CONFIG, patch)
+        custom.patch_namespaced_custom_object(
+            GROUP, VERSION, WARDEN, "quotawardenconfigs", CONFIG, patch
+        )
 
     rename("e2e-renamed")
     try:
@@ -317,18 +338,20 @@ def override(custom, operator):
             "metadata": {"name": target},
             "spec": {"namespace": target, "resources": resources},
         }
-        custom.create_cluster_custom_object(GROUP, VERSION, "quotaoverrides", body)
+        custom.create_namespaced_custom_object(GROUP, VERSION, WARDEN, "quotaoverrides", body)
         created.append(target)
 
     yield _create
     for name in created:
-        delete(custom.delete_cluster_custom_object, GROUP, VERSION, "quotaoverrides", name)
+        delete(
+            custom.delete_namespaced_custom_object, GROUP, VERSION, WARDEN, "quotaoverrides", name
+        )
 
 
 def conditions(custom, name):
-    status = custom.get_cluster_custom_object(GROUP, VERSION, "quotaoverrides", name).get(
-        "status", {}
-    )
+    status = custom.get_namespaced_custom_object(
+        GROUP, VERSION, WARDEN, "quotaoverrides", name
+    ).get("status", {})
     return {c["type"]: c for c in status.get("conditions", [])}
 
 
@@ -355,7 +378,7 @@ def test_deleting_the_override_returns_the_namespace_to_the_base(api, custom, ba
     base(cpu="2")
     override(NAMESPACE, cpu="8")
     wait_for(lambda: hard(api) == q(cpu="8"))
-    custom.delete_cluster_custom_object(GROUP, VERSION, "quotaoverrides", NAMESPACE)
+    custom.delete_namespaced_custom_object(GROUP, VERSION, WARDEN, "quotaoverrides", NAMESPACE)
     assert wait_for(lambda: hard(api) == q(cpu="2")), hard(api)
 
 
@@ -387,12 +410,14 @@ def extension(custom, operator):
             "metadata": {"name": name},
             "spec": {"namespace": target, "expirationDate": expires, "resources": resources},
         }
-        custom.create_cluster_custom_object(GROUP, VERSION, "quotaextensions", body)
+        custom.create_namespaced_custom_object(GROUP, VERSION, WARDEN, "quotaextensions", body)
         created.append(name)
 
     yield _create
     for name in created:
-        delete(custom.delete_cluster_custom_object, GROUP, VERSION, "quotaextensions", name)
+        delete(
+            custom.delete_namespaced_custom_object, GROUP, VERSION, WARDEN, "quotaextensions", name
+        )
 
 
 # the cluster's clock is real; these dates are safely on either side of it
@@ -401,7 +426,9 @@ PAST = "2020-01-01"
 
 
 def extension_exists(custom, name):
-    return exists(custom.get_cluster_custom_object, GROUP, VERSION, "quotaextensions", name)
+    return exists(
+        custom.get_namespaced_custom_object, GROUP, VERSION, WARDEN, "quotaextensions", name
+    )
 
 
 def test_extension_adds_on_top_of_the_override(api, base, override, extension):
@@ -438,8 +465,8 @@ def test_expiry_while_the_operator_is_stopped(api, custom, operator, base, exten
     try:
         # stands in for the clock passing expirationDate while nothing is watching
         patch = {"spec": {"expirationDate": PAST}}
-        custom.patch_cluster_custom_object(
-            GROUP, VERSION, "quotaextensions", "e2e-ext-stopped", patch
+        custom.patch_namespaced_custom_object(
+            GROUP, VERSION, WARDEN, "quotaextensions", "e2e-ext-stopped", patch
         )
         time.sleep(2)
         assert hard(api) == q(cpu="10")
@@ -482,9 +509,9 @@ def test_a_write_is_evented_on_the_quota(api, base):
 
 
 def exclusive(custom):
-    status = custom.get_cluster_custom_object(GROUP, VERSION, "quotawardenconfigs", CONFIG).get(
-        "status", {}
-    )
+    status = custom.get_namespaced_custom_object(
+        GROUP, VERSION, WARDEN, "quotawardenconfigs", CONFIG
+    ).get("status", {})
     return {c["type"]: c for c in status.get("conditions", [])}.get("Exclusive", {})
 
 
@@ -516,7 +543,9 @@ def test_delete_mode_removes_the_foreign_quota(api, custom, base, foreign):
 
     def set_mode(value):
         patch = {"spec": {"foreignResourceQuotas": value}}
-        custom.patch_cluster_custom_object(GROUP, VERSION, "quotawardenconfigs", CONFIG, patch)
+        custom.patch_namespaced_custom_object(
+            GROUP, VERSION, WARDEN, "quotawardenconfigs", CONFIG, patch
+        )
 
     set_mode("delete")
     try:
@@ -558,7 +587,9 @@ def test_retain_keeps_the_quota_and_warns(api, custom, base):
 
     def set_mode(value):
         patch = {"spec": {"onUnmanage": value}}
-        custom.patch_cluster_custom_object(GROUP, VERSION, "quotawardenconfigs", CONFIG, patch)
+        custom.patch_namespaced_custom_object(
+            GROUP, VERSION, WARDEN, "quotawardenconfigs", CONFIG, patch
+        )
 
     set_mode("retain")
     try:

@@ -51,8 +51,8 @@ class Result:
     retained: tuple[str, ...] = ()
 
 
-def list_objects(custom, plural: str) -> list[dict]:
-    return custom.list_cluster_custom_object(GROUP, VERSION, plural)["items"]
+def list_objects(custom, namespace: str, plural: str) -> list[dict]:
+    return custom.list_namespaced_custom_object(GROUP, VERSION, namespace, plural)["items"]
 
 
 def singleton(objects: list[dict], kind: str) -> tuple[dict | None, str]:
@@ -137,8 +137,8 @@ def reap(custom, extensions: list[dict]) -> list[str]:
             )
         )
         try:
-            custom.delete_cluster_custom_object(
-                GROUP, VERSION, "quotaextensions", meta["name"], body=options
+            custom.delete_namespaced_custom_object(
+                GROUP, VERSION, meta["namespace"], "quotaextensions", meta["name"], body=options
             )
         except ApiException as exc:
             if exc.status in (404, 409):

@@ -20,14 +20,16 @@ class FakeCustom:
     def __init__(self):
         self.patches = []
 
-    def patch_cluster_custom_object_status(self, group, version, plural, name, body, **kwargs):
+    def patch_namespaced_custom_object_status(
+        self, group, version, namespace, plural, name, body, **kwargs
+    ):
         assert kwargs == {"_content_type": "application/merge-patch+json"}
-        self.patches.append((plural, name, body))
+        self.patches.append((namespace, plural, name, body))
 
 
 def body(conditions=None):
     status = {"conditions": conditions} if conditions is not None else {}
-    return {"metadata": {"name": "default"}, "status": status}
+    return {"metadata": {"name": "default", "namespace": "warden"}, "status": status}
 
 
 def test_first_condition_is_a_transition():
@@ -79,6 +81,7 @@ def test_update_patches_and_warns_on_false():
     )
     assert custom.patches == [
         (
+            "warden",
             "quotaoverrides",
             "default",
             {"status": {"conditions": [stored("Valid", "False", "InvalidValues", "x")]}},

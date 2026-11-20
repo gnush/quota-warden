@@ -4,7 +4,7 @@ metadata:
   name: quotaextensions.quota-warden.gnush.github.io
 spec:
   group: quota-warden.gnush.github.io
-  scope: Cluster
+  scope: Namespaced
   names:
     kind: QuotaExtension
     plural: quotaextensions

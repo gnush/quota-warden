@@ -4,7 +4,7 @@ metadata:
   name: quotaoverrides.quota-warden.gnush.github.io
 spec:
   group: quota-warden.gnush.github.io
-  scope: Cluster
+  scope: Namespaced
   names:
     kind: QuotaOverride
     plural: quotaoverrides
@@ -44,7 +44,7 @@ spec:
         openAPIV3Schema:
           type: object
           required: [spec]
-          # cluster-scoped names are unique, so this allows one override per namespace.
+          # names are unique in the operator's namespace, so this allows one override per target.
           # namespace is a reserved word in CEL; 1.28 accepts only the escaped form.
           x-kubernetes-validations:
             - rule: self.metadata.name == self.spec.__namespace__

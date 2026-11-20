@@ -17,6 +17,8 @@ MANAGED_LABEL = {LABEL: "kubeflow-profile"}
 
 GROUP = "quota-warden.gnush.github.io"
 VERSION = "v1alpha1"
+# the operator's namespace, holding every source; cluster/fixtures/namespaces.yaml
+WARDEN = "quota-warden"
 
 # Makefile pins
 SUPPORTED_VERSIONS = ("v1.28.", "v1.37.")

@@ -6,13 +6,12 @@ import subprocess
 import pytest
 from kubernetes.client.exceptions import ApiException
 
-GROUP = "quota-warden.gnush.github.io"
-VERSION = "v1alpha1"
+from conftest import GROUP, VERSION, WARDEN
 
 
 @pytest.fixture
 def create(custom):
-    """Create a cluster-scoped object and return it as stored; deleted on teardown."""
+    """Create an object and return it as stored; deleted on teardown."""
     created = []
 
     def _create(plural, name, spec):
@@ -26,13 +25,13 @@ def create(custom):
             "metadata": {"name": name},
             "spec": spec,
         }
-        custom.create_cluster_custom_object(GROUP, VERSION, plural, body)
+        custom.create_namespaced_custom_object(GROUP, VERSION, WARDEN, plural, body)
         created.append((plural, name))
-        return custom.get_cluster_custom_object(GROUP, VERSION, plural, name)
+        return custom.get_namespaced_custom_object(GROUP, VERSION, WARDEN, plural, name)
 
     yield _create
     for plural, name in created:
-        custom.delete_cluster_custom_object(GROUP, VERSION, plural, name)
+        custom.delete_namespaced_custom_object(GROUP, VERSION, WARDEN, plural, name)
 
 
 def test_config_defaults_are_stored(create):
@@ -93,7 +92,9 @@ def test_override_cannot_be_retargeted(create, custom):
     create("quotaoverrides", "quota-user-a", {"namespace": "quota-user-a"})
     patch = {"spec": {"namespace": "quota-user-b"}}
     with pytest.raises(ApiException) as exc:
-        custom.patch_cluster_custom_object(GROUP, VERSION, "quotaoverrides", "quota-user-a", patch)
+        custom.patch_namespaced_custom_object(
+            GROUP, VERSION, WARDEN, "quotaoverrides", "quota-user-a", patch
+        )
     assert exc.value.status == 422
 
 
@@ -160,7 +161,7 @@ def test_printer_columns(create, plural):
     for name, spec in specs.items():
         create(plural, name, spec)
     header = subprocess.run(
-        ["kubectl", "--context", os.environ["E2E_CONTEXT"], "get", plural],
+        ["kubectl", "--context", os.environ["E2E_CONTEXT"], "-n", WARDEN, "get", plural],
         check=True,
         capture_output=True,
         text=True,
@@ -180,6 +181,8 @@ def test_the_all_column_shows_keys_no_other_column_names(create):
             "kubectl",
             "--context",
             os.environ["E2E_CONTEXT"],
+            "-n",
+            WARDEN,
             "get",
             "quotaextensions",
             "e2e-extension-columns",

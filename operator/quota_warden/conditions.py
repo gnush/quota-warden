@@ -61,9 +61,10 @@ def update(
     current = (body.get("status") or {}).get("conditions") or []
     new, transitions = merge_conditions(current, wanted, now or datetime.now(UTC), drop)
     if sorted(new, key=lambda c: c["type"]) != sorted(current, key=lambda c: c.get("type", "")):
-        custom.patch_cluster_custom_object_status(
+        custom.patch_namespaced_custom_object_status(
             GROUP,
             VERSION,
+            body["metadata"]["namespace"],
             plural,
             body["metadata"]["name"],
             {"status": {"conditions": new}},

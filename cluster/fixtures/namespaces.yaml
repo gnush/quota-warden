@@ -1,4 +1,10 @@
 ---
+# The operator's; its sources live here
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: quota-warden
+---
 # Managed
 apiVersion: v1
 kind: Namespace

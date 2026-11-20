@@ -52,11 +52,16 @@ class State:
         logger.log(level, message)
 
 
-def run_once(core, custom, state: State | None = None, now: datetime | None = None) -> list[Event]:
-    """One sweep, conditions included. Blocking; returns the Events to post."""
+def run_once(
+    core, custom, namespace: str, state: State | None = None, now: datetime | None = None
+) -> list[Event]:
+    """One sweep over the sources in `namespace`, conditions included.
+
+    Blocking; returns the Events to post.
+    """
     state = state or State()
     now = now or datetime.now(UTC)
-    configs = list_objects(custom, "quotawardenconfigs")
+    configs = list_objects(custom, namespace, "quotawardenconfigs")
     body, config_error = singleton(configs, "QuotaWardenConfig")
     try:
         if config_error:
@@ -106,8 +111,8 @@ def run_once(core, custom, state: State | None = None, now: datetime | None = No
     state.log(
         "base", logging.INFO, "baseResources set" if base else "no baseResources; no defaults"
     )
-    overrides = list_objects(custom, "quotaoverrides")
-    extensions = list_objects(custom, "quotaextensions")
+    overrides = list_objects(custom, namespace, "quotaoverrides")
+    extensions = list_objects(custom, namespace, "quotaextensions")
     results, issues = sweep(core, base, overrides, extensions, config, now)
     wanted = [ready, _exclusive(results, config)]
     drop = frozenset()
@@ -487,7 +492,7 @@ async def startup(settings: kopf.OperatorSettings, memo: kopf.Memo, **_):
     state = State()
 
     async def run():
-        for e in await asyncio.to_thread(run_once, core, custom, state=state):
+        for e in await asyncio.to_thread(run_once, core, custom, memo.namespace, state=state):
             kopf.event(e.body, type=e.type, reason=e.reason, message=e.message)
 
     memo.sweeper = Sweeper(run, interval.total_seconds())

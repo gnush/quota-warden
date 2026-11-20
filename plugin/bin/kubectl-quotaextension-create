@@ -91,7 +91,7 @@ done
 
 [[ -n "$NAME" ]] && ! valid_name "$NAME" && die "'$NAME' is not a valid object name"
 
-# The CR's name is cluster-wide, so the number is unique across namespaces, not
+# Every CR shares the operator's namespace, so the number is unique across targets, not
 # within one. Listing and picking the lowest free name can race with another
 # caller; the apply below then fails with 409 and says so.
 if [[ -z "$NAME" ]]; then

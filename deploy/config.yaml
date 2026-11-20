@@ -2,6 +2,7 @@ apiVersion: quota-warden.gnush.github.io/v1alpha1
 kind: QuotaWardenConfig
 metadata:
   name: default
+  namespace: quota-warden
 spec:
   # {} manages every namespace; narrow it before applying, or start with dryRun
   managedNamespaces:

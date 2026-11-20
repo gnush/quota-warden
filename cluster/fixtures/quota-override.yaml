@@ -3,6 +3,7 @@ apiVersion: quota-warden.gnush.github.io/v1alpha1
 kind: QuotaOverride
 metadata:
   name: quota-user-a
+  namespace: quota-warden
 spec:
   namespace: quota-user-a
   resources:
