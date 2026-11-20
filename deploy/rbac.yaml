@@ -23,27 +23,21 @@ rules:
   - apiGroups: [apiextensions.k8s.io]
     resources: [customresourcedefinitions]
     verbs: [list, watch]
+  # cluster-wide: kopf runs with --all-namespaces for the quota watch, which
+  # watches these kinds in every namespace too
   - apiGroups: [quota-warden.gnush.github.io]
     resources:
       - quotawardenconfigs
       - quotaoverrides
       - quotaextensions
     verbs: [get, list, watch]
-  # the sweep daemon is kopf's, so kopf adds its finalizer to the config object;
-  # only that kind needs it, and only that kind is patched
-  - apiGroups: [quota-warden.gnush.github.io]
-    resources: [quotawardenconfigs]
-    verbs: [patch]
-  # conditions; delete is the extension reaper
+  # conditions; cluster-wide for WrongNamespace on sources outside the operator namespace
   - apiGroups: [quota-warden.gnush.github.io]
     resources:
       - quotawardenconfigs/status
       - quotaoverrides/status
       - quotaextensions/status
     verbs: [patch]
-  - apiGroups: [quota-warden.gnush.github.io]
-    resources: [quotaextensions]
-    verbs: [delete]
   # on the quota in each managed namespace, and in `default` for cluster-scoped
   # objects: the client library reports no current namespace, so kopf falls back
   - apiGroups: [""]
@@ -57,6 +51,37 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
+  name: quota-warden
+subjects:
+  - kind: ServiceAccount
+    name: quota-warden
+    namespace: quota-warden
+---
+# Writes to the sources themselves: only in the operator namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: quota-warden
+  namespace: quota-warden
+rules:
+  # the sweep daemon is kopf's, so kopf adds its finalizer to the config object;
+  # only that kind needs it, and only that kind is patched
+  - apiGroups: [quota-warden.gnush.github.io]
+    resources: [quotawardenconfigs]
+    verbs: [patch]
+  # the extension reaper
+  - apiGroups: [quota-warden.gnush.github.io]
+    resources: [quotaextensions]
+    verbs: [delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: quota-warden
+  namespace: quota-warden
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
   name: quota-warden
 subjects:
   - kind: ServiceAccount

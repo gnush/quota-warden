@@ -1,7 +1,7 @@
 # Argo CD
 
 Argo CD builds the repo root with kustomize, so `path: .` installs what
-`kubectl apply -k .` does: CRDs, ServiceAccount, ClusterRole, Deployment.
+`kubectl apply -k .` does: CRDs, ServiceAccount, ClusterRole, Role, Deployment.
 `CreateNamespace=true` creates the namespace; Argo does not track it, so deleting
 the Application keeps it and the sources in it.
 

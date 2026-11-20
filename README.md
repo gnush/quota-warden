@@ -46,8 +46,8 @@ kubectl create namespace quota-warden
 kubectl apply -k 'github.com/gnush/quota-warden?ref=1.0.0'
 ```
 
-Installs the CRDs plus `deploy/`: ServiceAccount, a cluster-wide ClusterRole,
-and the Deployment. The namespace is in no kustomization: it holds every source,
+Installs the CRDs plus `deploy/`: ServiceAccount, a cluster-wide ClusterRole, a
+Role for writes to the sources in the operator namespace, and the Deployment. The namespace is in no kustomization: it holds every source,
 so removing the operator keeps it, and deleting it is a separate, explicit step.
 Liveness and readiness are kopf's `/healthz` on 8080. The replica count is yours
 to raise — see [Replicas](#replicas).

@@ -1,4 +1,4 @@
-"""The operator as deployed: the manifests, the image, and the ClusterRole.
+"""The operator as deployed: the manifests, the image, and the RBAC.
 
 The other modules run `kopf run` from the host as the kubeconfig's user — an
 admin in kind. Only this one runs under the ServiceAccount, so it is the only
@@ -20,6 +20,7 @@ from conftest import GROUP, VERSION, WARDEN, delete, exists, wait_for
 
 NAMESPACE = "quota-warden"
 DEPLOYMENT = "quota-warden"
+SERVICE_ACCOUNT = "quota-warden"
 
 # matches no fixture namespace: the two e2e modules see none of each other's objects
 LABEL = "e2e-deployment"
@@ -235,7 +236,7 @@ def test_two_replicas_write_once_between_them(api, custom, operator):
         wait_for(lambda: len(running_pods(api)) == 1, timeout=120)
 
 
-# --- the ClusterRole, one grant at a time -----------------------------------
+# --- the ClusterRole and Role, one grant at a time --------------------------
 
 # All of these also depend on kopf's CRD list/watch: without it no handler fires
 # and every case times out.
@@ -295,6 +296,58 @@ def test_an_expired_extension_is_deleted(api, custom, operator):
     )
     # past its date when the first sweep saw it, so it was never applied
     assert hard(api) == q(cpu="2", memory="1Gi")
+
+
+def test_a_source_elsewhere_is_marked(api, custom, operator):
+    """*/status: patch outside the operator namespace — WrongNamespace."""
+    body = {
+        "apiVersion": f"{GROUP}/{VERSION}",
+        "kind": "QuotaOverride",
+        "metadata": {"name": TARGET},
+        "spec": {"namespace": TARGET, "resources": {"cpu": "9"}},
+    }
+    custom.create_namespaced_custom_object(GROUP, VERSION, TARGET, "quotaoverrides", body)
+    try:
+
+        def reason():
+            status = custom.get_namespaced_custom_object(
+                GROUP, VERSION, TARGET, "quotaoverrides", TARGET
+            ).get("status", {})
+            return {c["type"]: c for c in status.get("conditions", [])}.get("Applied", {}).get(
+                "reason"
+            )
+
+        assert wait_for(reason) == "WrongNamespace", logs(api)
+    finally:
+        delete(
+            custom.delete_namespaced_custom_object, GROUP, VERSION, TARGET, "quotaoverrides", TARGET
+        )
+
+
+@pytest.mark.parametrize(
+    ("verb", "plural"), [("patch", "quotawardenconfigs"), ("delete", "quotaextensions")]
+)
+def test_writes_to_sources_are_limited_to_the_operator_namespace(api, verb, plural):
+    """The Role: finalizer patch and reaper delete in the operator namespace only."""
+
+    def allowed(namespace):
+        review = client.AuthorizationV1Api().create_subject_access_review(
+            {
+                "spec": {
+                    "user": f"system:serviceaccount:{NAMESPACE}:{SERVICE_ACCOUNT}",
+                    "resourceAttributes": {
+                        "group": GROUP,
+                        "resource": plural,
+                        "verb": verb,
+                        "namespace": namespace,
+                    },
+                }
+            }
+        )
+        return review.status.allowed
+
+    assert allowed(WARDEN)
+    assert not allowed(TARGET)
 
 
 def test_an_event_is_written_on_the_quota(api, custom, operator):

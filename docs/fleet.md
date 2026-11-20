@@ -22,7 +22,7 @@ spec:
 
 `revision` is the release tag; bumping it is the upgrade. The result is what
 `kubectl apply -k .` installs: four CRDs, then ServiceAccount, ClusterRole,
-ClusterRoleBinding, Deployment. Create the namespace `quota-warden` outside this
+ClusterRoleBinding, Role, RoleBinding, Deployment. Create the namespace `quota-warden` outside this
 GitRepo: it holds every source, and removing the GitRepo would delete it with the bundle. Add `spec.targets` to place it
 somewhere other than the `default` cluster group.
 
