@@ -20,9 +20,7 @@ def test_names_from_env_warden_namespace(run, script):
 
 
 @pytest.mark.parametrize("script", COMPLETERS)
-@pytest.mark.parametrize(
-    "flag", (["--warden-namespace", "typed"], ["--warden-namespace=typed"])
-)
+@pytest.mark.parametrize("flag", (["--warden-namespace", "typed"], ["--warden-namespace=typed"]))
 def test_names_from_typed_warden_namespace(run, script, flag):
     result = run(
         script,
@@ -39,8 +37,7 @@ def test_names_from_typed_warden_namespace(run, script, flag):
 def test_names_with_typed_context(run, script):
     result = run(script, "--context", "staging", "")
     assert any(
-        a.startswith("--context staging -n quota-warden get quotaextensions")
-        for a in result.args
+        a.startswith("--context staging -n quota-warden get quotaextensions") for a in result.args
     )
 
 
