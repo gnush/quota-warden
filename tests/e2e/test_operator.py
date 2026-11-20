@@ -78,8 +78,21 @@ def operator(api, custom, tmp_path_factory):
         if process.poll() is None:
             # the operator removes its own quotas once the base is gone
             wait_for(lambda: hard(api) is None and hard(api, "quota-user-a") is None)
-        failed = process.stop()
         delete(custom.delete_cluster_custom_object, GROUP, VERSION, "quotawardenconfigs", CONFIG)
+        if process.poll() is None:
+            # kopf removes the sweep daemon's finalizer only while running
+            wait_for(
+                lambda: (
+                    not exists(
+                        custom.get_cluster_custom_object,
+                        GROUP,
+                        VERSION,
+                        "quotawardenconfigs",
+                        CONFIG,
+                    )
+                )
+            )
+        failed = process.stop()
         delete(api.delete_namespace, NAMESPACE)
         wait_for(lambda: not exists(api.read_namespace, NAMESPACE), timeout=120)
         if failed:
