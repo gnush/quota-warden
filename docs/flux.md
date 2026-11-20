@@ -1,8 +1,9 @@
 # Flux
 
 The repo root is the kustomization Flux builds, so `path: .` installs what
-`kubectl apply -k .` does: CRDs, namespace, ServiceAccount, ClusterRole,
-Deployment. Pin a release tag for the same reason as in [Releasing](DEV.md#releasing).
+`kubectl apply -k .` does: CRDs, ServiceAccount, ClusterRole, Deployment.
+Create the namespace `quota-warden` outside this Kustomization: it holds every
+source, and a pruned Kustomization would delete it with the app. Pin a release tag for the same reason as in [Releasing](DEV.md#releasing).
 
 ```yaml
 apiVersion: source.toolkit.fluxcd.io/v1

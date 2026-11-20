@@ -35,18 +35,22 @@ while that config is missing or invalid.
 ## Deploying
 
 ```sh
+kubectl apply -f namespace.yaml
 kubectl apply -k .
 ```
 
 From a checkout; kustomize fetches nothing extra. From a release tag:
 
 ```sh
+kubectl create namespace quota-warden
 kubectl apply -k 'github.com/gnush/quota-warden?ref=1.0.0'
 ```
 
-Installs the CRDs plus `deploy/`: namespace `quota-warden`, ServiceAccount, a
-cluster-wide ClusterRole, and the Deployment. Liveness and readiness are kopf's
-`/healthz` on 8080. The replica count is yours to raise — see [Replicas](#replicas).
+Installs the CRDs plus `deploy/`: ServiceAccount, a cluster-wide ClusterRole,
+and the Deployment. The namespace is in no kustomization: it holds every source,
+so removing the operator keeps it, and deleting it is a separate, explicit step.
+Liveness and readiness are kopf's `/healthz` on 8080. The replica count is yours
+to raise — see [Replicas](#replicas).
 
 Nothing is managed until a `QuotaWardenConfig` exists, which is left to the
 deployment: `deploy/config.yaml` is an example with `dryRun: true`, not part of

@@ -1,8 +1,9 @@
 # Argo CD
 
 Argo CD builds the repo root with kustomize, so `path: .` installs what
-`kubectl apply -k .` does: CRDs, namespace, ServiceAccount, ClusterRole,
-Deployment.
+`kubectl apply -k .` does: CRDs, ServiceAccount, ClusterRole, Deployment.
+`CreateNamespace=true` creates the namespace; Argo does not track it, so deleting
+the Application keeps it and the sources in it.
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
@@ -18,9 +19,12 @@ spec:
     targetRevision: 1.0.0
   destination:
     server: https://kubernetes.default.svc
+    namespace: quota-warden
   syncPolicy:
     automated:
       prune: true
+    syncOptions:
+      - CreateNamespace=true
 ```
 
 `targetRevision` is the release tag; bumping it is the upgrade. Prune so a file

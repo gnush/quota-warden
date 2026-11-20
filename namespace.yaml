@@ -1,0 +1,5 @@
+# In no kustomization: removing the operator must not delete its sources with it.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: quota-warden
