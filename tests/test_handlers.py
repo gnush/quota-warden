@@ -315,6 +315,43 @@ def test_expired_extension_on_an_untargeted_namespace_is_deleted():
     assert custom.deleted == ["e"]
 
 
+@pytest.mark.parametrize(
+    ("now", "deleted"),
+    [
+        # expires 2026-11-07, retention 3: kept through 2026-11-10
+        (datetime(2026, 11, 10, 23, 59, tzinfo=UTC), []),
+        (datetime(2026, 11, 11, tzinfo=UTC), ["e"]),
+    ],
+)
+def test_retention_delays_the_delete(now, deleted):
+    custom = FakeCustom(
+        config(managedNamespaces=SELECTOR, baseResources=dict(gpu="1"), expiredRetentionDays=3),
+        extension("e", "a", "2026-11-07", gpu="8"),
+    )
+    core = FakeCore([namespace("a")])
+    run_once(core, custom, WARDEN, now=now)
+    assert custom.deleted == deleted
+    assert core.quotas["a", "quota-warden"].spec.hard == {"gpu": "1"}
+    if not deleted:
+        assert custom.conditions("quotaextensions", "e")["Applied"] == (
+            "False",
+            "expired at 2026-11-08T00:00:00Z; deleted after 2026-11-10",
+        )
+
+
+def test_negative_retention_never_deletes():
+    custom = FakeCustom(
+        config(managedNamespaces=SELECTOR, expiredRetentionDays=-1),
+        extension("e", "a", "2020-01-01", gpu="8"),
+    )
+    run_once(FakeCore([namespace("a")]), custom, WARDEN, now=NOW)
+    assert custom.deleted == []
+    assert custom.conditions("quotaextensions", "e")["Applied"] == (
+        "False",
+        "expired at 2020-01-02T00:00:00Z; kept, expiredRetentionDays is -1",
+    )
+
+
 @pytest.mark.parametrize("expires", [None, "next week"])
 def test_extension_with_a_bad_date_is_never_deleted(expires):
     custom = FakeCustom(config(managedNamespaces=SELECTOR), extension("e", "a", expires, gpu="8"))

@@ -9,7 +9,7 @@ import logging
 import os
 import random
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import kopf
 from kubernetes import client
@@ -143,7 +143,8 @@ def run_once(
         wanted = _source_conditions(override, "override", issues, results, config.dry_run)
         wanted = _targeted(override, wanted, skipped, listed, "override")
         events += update(custom, "quotaoverrides", override, wanted)
-    reaped, reap_events = _reap(custom, expired(extensions, now), state, config.dry_run)
+    retention = config.expired_retention_days
+    reaped, reap_events = _reap(custom, expired(extensions, now, retention), state, config.dry_run)
     events += reap_events
     for extension in extensions:
         # deleted: a status patch would 404 and its events name a gone object
@@ -151,7 +152,7 @@ def run_once(
             continue
         wanted = _source_conditions(extension, "extension", issues, results, config.dry_run)
         wanted = _targeted(extension, wanted, skipped, listed, "extension")
-        wanted = _expiry(extension, wanted, now)
+        wanted = _expiry(extension, wanted, now, retention)
         events += update(custom, "quotaextensions", extension, wanted)
     return events
 
@@ -192,7 +193,7 @@ def _targeted(source: dict, wanted, skipped, listed, kind: str) -> list[Conditio
     ]
 
 
-def _expiry(extension: dict, wanted, now) -> list[Condition]:
+def _expiry(extension: dict, wanted, now, retention_days: int) -> list[Condition]:
     """Overrides Valid and Applied for a date the CRD should have rejected, or a past one."""
     value = extension.get("spec", {}).get("expirationDate")
     expires = expires_at(extension)
@@ -206,8 +207,13 @@ def _expiry(extension: dict, wanted, now) -> list[Condition]:
             Condition("Applied", "False", "InvalidExpirationDate", message),
         ]
     elif now >= expires:
-        # seen only while the delete is pending or suppressed by dryRun
         message = f"expired at {expires:%Y-%m-%dT%H:%M:%SZ}"
+        if retention_days < 0:
+            message += "; kept, expiredRetentionDays is -1"
+        elif retention_days > 0:
+            # the last day kept, read like expirationDate
+            last = expires + timedelta(days=retention_days - 1)
+            message += f"; deleted after {last:%Y-%m-%d}"
         replaced = [Condition("Applied", "False", "Expired", message)]
     else:
         return wanted

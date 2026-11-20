@@ -536,6 +536,34 @@ def test_extension_created_expired_is_deleted_and_never_applied(api, custom, bas
     assert hard(api) == q(cpu="2")
 
 
+def test_negative_retention_keeps_the_expired_extension(api, custom, base, extension):
+    label(api, MANAGED_LABEL[LABEL])
+    base(cpu="2")
+    wait_for(lambda: hard(api) == q(cpu="2"))
+
+    def set_retention(value):
+        patch = {"spec": {"expiredRetentionDays": value}}
+        custom.patch_namespaced_custom_object(
+            GROUP, VERSION, WARDEN, "quotawardenconfigs", CONFIG, patch
+        )
+
+    def applied():
+        status = custom.get_namespaced_custom_object(
+            GROUP, VERSION, WARDEN, "quotaextensions", "e2e-ext-kept"
+        ).get("status", {})
+        return {c["type"]: c for c in status.get("conditions", [])}.get("Applied", {})
+
+    set_retention(-1)
+    try:
+        extension("e2e-ext-kept", NAMESPACE, PAST, cpu="8")
+        assert wait_for(lambda: applied().get("reason") == "Expired"), applied()
+        assert extension_exists(custom, "e2e-ext-kept")
+        assert hard(api) == q(cpu="2")
+    finally:
+        set_retention(0)
+    assert wait_for(lambda: not extension_exists(custom, "e2e-ext-kept"))
+
+
 def test_expiry_while_the_operator_is_stopped(api, custom, operator, base, extension):
     label(api, MANAGED_LABEL[LABEL])
     base(cpu="2")

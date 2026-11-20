@@ -3,7 +3,7 @@
 import json
 import re
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
 
 from kubernetes.client import V1DeleteOptions, V1Preconditions
@@ -120,9 +120,12 @@ def sweep(
     return results, list(issues)
 
 
-def expired(extensions: list[dict], now: datetime) -> list[dict]:
-    """Past their expirationDate; one without a valid date never expires."""
-    return [e for e in extensions if (t := expires_at(e)) is not None and now >= t]
+def expired(extensions: list[dict], now: datetime, retention_days: int) -> list[dict]:
+    """Past their expirationDate plus retention; one without a valid date never expires."""
+    if retention_days < 0:
+        return []
+    keep = timedelta(days=retention_days)
+    return [e for e in extensions if (t := expires_at(e)) is not None and now >= t + keep]
 
 
 def reap(custom, extensions: list[dict]) -> list[str]:
