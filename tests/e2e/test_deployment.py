@@ -8,6 +8,7 @@ place deploy/rbac.yaml is exercised.
 operator, which this module must not touch.
 """
 
+import re
 import time
 from datetime import UTC, datetime
 
@@ -416,7 +417,8 @@ def test_deleting_the_base_removes_the_quota(api, custom, operator):
 def test_the_operator_never_hit_a_forbidden(api, operator):
     """The cases above are the grants that were thought of; this is the ones that were not."""
     output = logs(api, since=operator)
-    forbidden = [line for line in output.splitlines() if "Forbidden" in line or "403" in line]
+    # whole word: kopf peer ids embed a timestamp, and 14:03:20 contains "403"
+    forbidden = [line for line in output.splitlines() if re.search(r"Forbidden|\b403\b", line)]
     assert not forbidden, forbidden
     # a restart would make the cases above pass against a different process
     assert pod(api).status.container_statuses[0].restart_count == 0, output
