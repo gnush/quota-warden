@@ -1007,7 +1007,12 @@ def configure_peering(
                 raise ApiException(status=status)
 
         def patch_cluster_custom_object(self, group, version, plural, name, body):
-            assert (group, version, plural, name) == ("kopf.dev", "v1", "clusterkopfpeerings", "quota-warden")
+            assert (group, version, plural, name) == (
+                "kopf.dev",
+                "v1",
+                "clusterkopfpeerings",
+                "quota-warden",
+            )
             return stored(main, body)
 
         def patch_cluster_custom_object_status(self, group, version, plural, name, body):
