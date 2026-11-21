@@ -973,17 +973,45 @@ def test_unmanage_under_dry_run_is_reported_not_done():
     assert ("a", "quota-warden") in core.quotas
 
 
-def configure_peering(settings, monkeypatch, priority=7, status=None):
-    """What startup does to the peering settings, without the API clients."""
+def keeps(patch):
+    return patch
+
+
+def prunes(patch):
+    return {}
+
+
+def configure_peering(
+    settings, monkeypatch, priority=7, status=None, main=keeps, subresource=None, patched=None
+):
+    """What startup does to the peering settings, without the API clients.
+
+    `main` and `subresource` are what the API server stores of a status patch;
+    `subresource=None` is a CRD without one, `patched` an error status on patch.
+    """
     import quota_warden.handlers as handlers
 
     created = []
+
+    def stored(store, patch):
+        if patched is not None:
+            raise ApiException(status=patched)
+        if store is None:
+            raise ApiException(status=404)
+        return store(patch)
 
     class Coordination:
         def create_cluster_custom_object(self, group, version, plural, body):
             created.append((group, version, plural, body))
             if status is not None:
                 raise ApiException(status=status)
+
+        def patch_cluster_custom_object(self, group, version, plural, name, body):
+            assert (group, version, plural, name) == ("kopf.dev", "v1", "clusterkopfpeerings", "quota-warden")
+            return stored(main, body)
+
+        def patch_cluster_custom_object_status(self, group, version, plural, name, body):
+            return stored(subresource, body)
 
     monkeypatch.setattr(handlers.client, "CustomObjectsApi", lambda: Coordination())
     monkeypatch.setattr(
@@ -1037,6 +1065,32 @@ def test_a_missing_peering_crd_is_reported(monkeypatch):
     with pytest.raises(kopf.PermanentError):
         configure_peering(Settings(), monkeypatch, status=404)
     assert handlers.PEERING_NAME == "quota-warden"
+
+
+def test_a_status_subresource_carries_the_keep_alives(monkeypatch):
+    # the main patch drops status; kopf writes to the subresource instead
+    configure_peering(Settings(), monkeypatch, main=prunes, subresource=keeps)
+
+
+@pytest.mark.parametrize("subresource", [None, prunes], ids=["schema", "subresource"])
+def test_a_pruned_status_is_reported(monkeypatch, subresource):
+    # otherwise no replica sees another, and all of them sweep
+    with pytest.raises(kopf.PermanentError, match="pruned"):
+        configure_peering(Settings(), monkeypatch, main=prunes, subresource=subresource)
+
+
+def test_a_probe_without_permission_is_reported(monkeypatch):
+    with pytest.raises(kopf.PermanentError, match="ClusterKopfPeering"):
+        configure_peering(Settings(), monkeypatch, patched=403)
+
+
+def test_the_probe_is_a_dead_peer(monkeypatch):
+    # so kopf neither pauses for it nor needs it removed
+    from kopf._core.engines.peering import Peer
+
+    import quota_warden.handlers as handlers
+
+    assert Peer(identity=handlers.PROBE, **handlers.PROBE_PEER).is_dead
 
 
 def test_only_the_operator_namespace_passes_the_filter():

@@ -19,6 +19,10 @@ rules:
   - apiGroups: [kopf.dev]
     resources: [clusterkopfpeerings]
     verbs: [get, list, watch, patch, create]
+  # kopf patches status there when the CRD has a status subresource
+  - apiGroups: [kopf.dev]
+    resources: [clusterkopfpeerings/status]
+    verbs: [patch]
   # kopf discovers resources through the CRDs
   - apiGroups: [apiextensions.k8s.io]
     resources: [customresourcedefinitions]

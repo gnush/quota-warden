@@ -113,7 +113,9 @@ installed: from `peering/`, or as already present for another kopf operator. It 
 shared by every kopf operator in the cluster, so it is deployed apart from this one,
 and removing quota-warden leaves it in place. The operator sets `peering.mandatory`. Without the CRD it exits at
 startup naming the permission; without the `ClusterKopfPeering` object
-`quota-warden` it creates it, and creates it only with RBAC to do so. One peering
+`quota-warden` it creates it, and creates it only with RBAC to do so. It also
+exits when an existing CRD prunes the object's `status`, where kopf keeps its
+peers. One peering
 per cluster: installs in two namespaces write the same quotas, so only one sweeps. Missing either, kopf would otherwise
 fall back to standalone — every replica sweeping, which is the case peering
 exists to prevent.

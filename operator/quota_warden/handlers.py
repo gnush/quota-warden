@@ -30,6 +30,10 @@ logger = logging.getLogger(__name__)
 # not kopf's "default": another kopf operator using that would share our peering
 PEERING_NAME = "quota-warden"
 PEERING_OBJECT = "clusterkopfpeerings"
+# An expired peer: kopf ignores it for priority and deletes it on its next
+# peering event, so the probe needs no cleanup of its own.
+PROBE = "quota-warden-probe"
+PROBE_PEER = {"priority": 0, "lifetime": 1, "lastseen": "2000-01-01T00:00:00+00:00"}
 # 32768: kopf's documented $RANDOM range. A collision pauses both replicas --
 # a stall, which the next rollout clears -- so the draw need only be unlikely.
 PRIORITIES = 32768
@@ -522,6 +526,7 @@ def configure_peering(settings) -> None:
     # replicas sweeping, the very thing peering is here to stop
     settings.peering.mandatory = True
     ensure_peering()
+    probe_peering()
     logger.info("peering priority %d", settings.peering.priority)
 
 
@@ -545,6 +550,37 @@ def ensure_peering() -> None:
         # already there: whoever deployed it owns it, and deleting it is not ours
         if exc.status != 409:
             raise kopf.PermanentError(f"ClusterKopfPeering {PEERING_NAME}: {exc.reason}") from exc
+
+
+def probe_peering() -> None:
+    """Fail unless a keep-alive written to the peering object's status survives.
+
+    A CRD installed by someone else may prune `status`. kopf would then see no
+    peers and every replica would sweep, with no error anywhere.
+    """
+    custom = client.CustomObjectsApi()
+    probe = {"status": {PROBE: PROBE_PEER}}
+    args = ("kopf.dev", "v1", PEERING_OBJECT, PEERING_NAME, probe)
+    try:
+        stored = custom.patch_cluster_custom_object(*args)
+        if PROBE not in (stored.get("status") or {}):
+            # a status subresource drops status from the main patch; kopf
+            # writes there too
+            try:
+                stored = custom.patch_cluster_custom_object_status(*args)
+            except ApiException as exc:
+                if exc.status != 404:
+                    raise
+                stored = {}
+    except ApiException as exc:
+        raise kopf.PermanentError(f"ClusterKopfPeering {PEERING_NAME}: {exc.reason}") from exc
+    if PROBE not in (stored.get("status") or {}):
+        raise kopf.PermanentError(
+            f"ClusterKopfPeering {PEERING_NAME}: status is pruned, so kopf's keep-alives"
+            " would be dropped and every replica sweep; the CRD needs"
+            " x-kubernetes-preserve-unknown-fields on status, as in"
+            " peering/clusterkopfpeering.yaml"
+        )
 
 
 # on.event, not on.create/update: those write progress annotations onto every
