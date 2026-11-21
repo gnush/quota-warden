@@ -68,6 +68,9 @@ down-compat:
 # `up` is an order-only prerequisite:
 # a failing create stops the run instead of being swallowed before pytest starts
 e2e: | $(if $(NO_UP),,up)
+	# a pod left by `deploy` is a peer: it sweeps while a test has the local operator stopped
+	kubectl --context $(CONTEXT) -n $(NAMESPACE) delete deploy/quota-warden \
+		--ignore-not-found --cascade=foreground --wait
 	E2E_CONTEXT=$(CONTEXT) $(PYTEST) $(ROOT)/tests/e2e -v -p no:cacheprovider \
 		--ignore=$(ROOT)/tests/e2e/test_deployment.py
 
