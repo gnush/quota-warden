@@ -34,8 +34,8 @@ endef
 
 # objects created right after `apply` 404 until the CRD is Established
 define INSTALL
-kubectl --context $(1) apply -f $(ROOT)/crds/
-kubectl --context $(1) wait --for condition=established --timeout=60s -f $(ROOT)/crds/
+kubectl --context $(1) apply -f $(ROOT)/crds/ -f $(ROOT)/peering/clusterkopfpeering.yaml
+kubectl --context $(1) wait --for condition=established --timeout=60s -f $(ROOT)/crds/ -f $(ROOT)/peering/clusterkopfpeering.yaml
 kubectl --context $(1) apply -f $(ROOT)/cluster/fixtures/namespaces.yaml
 endef
 

@@ -1,7 +1,7 @@
 # Flux
 
 The repo root is the kustomization Flux builds, so `path: .` installs what
-`kubectl apply -k .` does: CRDs, ServiceAccount, ClusterRole, Role, Deployment.
+`kubectl apply -k .` does: quota-warden's CRDs, ServiceAccount, ClusterRole, Role, Deployment.
 Create the namespace `quota-warden` outside this Kustomization: it holds every
 source, and a pruned Kustomization would delete it with the app. Pin a release tag for the same reason as in [Releasing](DEV.md#releasing).
 
@@ -30,6 +30,10 @@ spec:
   prune: true
   interval: 10m
 ```
+
+The peering CRD is not in `path: .`. Add a second Kustomization with `path: ./peering`
+unless `clusterkopfpeerings.kopf.dev` already exists; it is shared by every kopf
+operator, so it does not belong to this one.
 
 `prune: true` so removing a file from a release deletes it. The bundle has no
 custom resources, so nothing waits on CRD establishment; the operator still does

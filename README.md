@@ -14,12 +14,12 @@ before it manages anything — see [Configuration](#configuration).
 ## Running
 
 ```sh
-kubectl apply -f crds/ -f namespace.yaml
+kubectl apply -f peering/clusterkopfpeering.yaml -f crds/ -f namespace.yaml
 QUOTA_WARDEN_NAMESPACE=quota-warden .venv/bin/kopf run --all-namespaces -m quota_warden.handlers
 ```
 
 In a pod it uses the service account and its namespace; elsewhere the current
-kubeconfig context, so check `kubectl config current-context` first. `crds/` includes kopf's peering
+kubeconfig context, so check `kubectl config current-context` first. `peering/` is kopf's peering
 CRD, which this refuses to run without — see [Replicas](#replicas).
 
 Log level is kopf's: `--quiet` for problems only, `--verbose` for everything,
@@ -105,8 +105,10 @@ loop is a kopf daemon for that reason. A replica that has just started may sweep
 once before it learns of the other, which is harmless: the writes are
 server-side apply with one field manager.
 
-**The peering CRD is not optional.** `crds/clusterkopfpeering.yaml` must be
-installed, and the operator sets `peering.mandatory`. Without the CRD it exits at
+**The peering CRD is not optional.** `clusterkopfpeerings.kopf.dev` must be
+installed: from `peering/`, or as already present for another kopf operator. It is
+shared by every kopf operator in the cluster, so it is deployed apart from this one,
+and removing quota-warden leaves it in place. The operator sets `peering.mandatory`. Without the CRD it exits at
 startup naming the permission; without the `ClusterKopfPeering` object
 `quota-warden` it creates it, and creates it only with RBAC to do so. One peering
 per cluster: installs in two namespaces write the same quotas, so only one sweeps. Missing either, kopf would otherwise
@@ -128,7 +130,9 @@ make -f cluster/Makefile undeploy    # deploy/ only; CRDs and sources stay
 ## GitOps
 
 The repo root is a kustomize base, pinned by release tag. Flux and Argo CD build
-it with `path: .`; Fleet cannot, and lists `crds` and `deploy` instead. What they
+it with `path: .`; Fleet cannot, and lists `crds` and `deploy` instead. The peering
+CRD is not in the base: deploy `peering/` first, as its own Kustomization, Application
+or GitRepo path, unless `clusterkopfpeerings.kopf.dev` already exists. What they
 can override without vendoring the manifests differs:
 
 | Tool                    | Image                         | Log flags                                  |

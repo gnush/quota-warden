@@ -6,5 +6,4 @@ resources:
   - crds/quotaoverride.yaml
   - crds/quotaextension.yaml
   - crds/quotawardenconfig.yaml
-  - crds/clusterkopfpeering.yaml
   - deploy

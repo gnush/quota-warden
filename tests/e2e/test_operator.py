@@ -120,7 +120,7 @@ class Operator:
         with self.log.open("a") as out:
             self.process = subprocess.Popen(
                 # no --standalone: the operator sets peering.mandatory, and creates
-                # the ClusterKopfPeering itself; crds/ shipped its CRD
+                # the ClusterKopfPeering itself; peering/ shipped its CRD
                 [sys.executable, "-m", "kopf", "run", "--all-namespaces"]
                 + ["-m", "quota_warden.handlers"],
                 env={

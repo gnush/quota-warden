@@ -16,12 +16,17 @@ spec:
   repo: https://github.com/gnush/quota-warden
   revision: 1.0.0
   paths:
+    - peering
     - crds
     - deploy
 ```
 
+Drop `peering` when `clusterkopfpeerings.kopf.dev` already exists: Helm refuses a
+CRD another release or tool owns. It is its own bundle, so removing it is not part
+of removing quota-warden.
+
 `revision` is the release tag; bumping it is the upgrade. The result is what
-`kubectl apply -k .` installs: four CRDs, then ServiceAccount, ClusterRole,
+`kubectl apply -k peering` then `-k .` install: four CRDs, then ServiceAccount, ClusterRole,
 ClusterRoleBinding, Role, RoleBinding, Deployment. Create the namespace `quota-warden` outside this
 GitRepo: it holds every source, and removing the GitRepo would delete it with the bundle. Add `spec.targets` to place it
 somewhere other than the `default` cluster group.

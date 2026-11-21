@@ -1,7 +1,7 @@
 # Argo CD
 
 Argo CD builds the repo root with kustomize, so `path: .` installs what
-`kubectl apply -k .` does: CRDs, ServiceAccount, ClusterRole, Role, Deployment.
+`kubectl apply -k .` does: quota-warden's CRDs, ServiceAccount, ClusterRole, Role, Deployment.
 `CreateNamespace=true` creates the namespace; Argo does not track it, so deleting
 the Application keeps it and the sources in it.
 
@@ -26,6 +26,10 @@ spec:
     syncOptions:
       - CreateNamespace=true
 ```
+
+The peering CRD is not in `path: .`. Add a second Application with `path: peering`
+unless `clusterkopfpeerings.kopf.dev` already exists; it is shared by every kopf
+operator, so it does not belong to this one.
 
 `targetRevision` is the release tag; bumping it is the upgrade. Prune so a file
 removed from a release is deleted.
