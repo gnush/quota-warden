@@ -78,6 +78,7 @@ e2e: | $(if $(NO_UP),,up)
 deploy:
 	docker build -t $(IMAGE) $(ROOT)
 	kind load docker-image $(IMAGE) --name $(KIND_CLUSTER)
+	kubectl --context $(CONTEXT) apply -k $(ROOT)/peering
 	kubectl --context $(CONTEXT) apply -f $(ROOT)/namespace.yaml
 	kubectl kustomize $(ROOT) | sed 's#image: ghcr.io/gnush/quota-warden:.*#image: $(IMAGE)#' \
 		| kubectl --context $(CONTEXT) apply -f -

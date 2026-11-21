@@ -36,6 +36,7 @@ while that config is missing or invalid.
 ## Deploying
 
 ```sh
+kubectl apply -k peering    # skip if clusterkopfpeerings.kopf.dev exists
 kubectl apply -f namespace.yaml
 kubectl apply -k .
 ```
@@ -43,11 +44,13 @@ kubectl apply -k .
 From a checkout; kustomize fetches nothing extra. From a release tag:
 
 ```sh
+kubectl apply -k 'github.com/gnush/quota-warden/peering?ref=1.0.0'
 kubectl create namespace quota-warden
 kubectl apply -k 'github.com/gnush/quota-warden?ref=1.0.0'
 ```
 
-Installs the CRDs plus `deploy/`: ServiceAccount, a cluster-wide ClusterRole, a
+`peering` is kopf's peering CRD, shared with any other kopf operator — see
+[Replicas](#replicas). `.` installs quota-warden's CRDs plus `deploy/`: ServiceAccount, a cluster-wide ClusterRole, a
 Role for writes to the sources in the operator namespace, and the Deployment. The namespace is in no kustomization: it holds every source,
 so removing the operator keeps it, and deleting it is a separate, explicit step.
 Liveness and readiness are kopf's `/healthz` on 8080. The replica count is yours
